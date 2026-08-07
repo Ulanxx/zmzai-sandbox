@@ -13,17 +13,18 @@ pnpm dev
 
 当前版本是 Sandbox Runner 控制台的第一条可验证闭环：
 
-- 创建一次运行并查看任务状态；
+- 登录后读取 Relay 可用模型，并创建一次 Agent 运行；
+- 由 Relay 生成结构化 `run_code` 命令并在 OpenSandbox 中执行；
 - 通过 Server-Sent Events 接收实时事件流；
 - 取消排队中或执行中的任务；
 - 查看退出码和生成的产物；
-- 通过 Provider 边界为 OpenSandbox 接入预留位置。
+- 通过 Provider 边界接入 OpenSandbox。
 - `GET /api/provider` 提供 OpenSandbox 配置和健康检查。
 
-默认使用内置演示 Provider，不会执行宿主机命令。设置 `OPEN_SANDBOX_URL` 后，
-任务会明确提示 OpenSandbox 适配器尚未接入，不会静默排队。
+用户不在 Sandbox 输入 API Key。登录会话由 `auth.zmzai.cloud` 校验，模型调用继续
+通过 `m.zmzai.cloud` 按用户额度结算。未登录时控制台只显示登录入口，不会返回模型目录。
 
-`OpenSandboxProvider` 的生命周期和命令 SSE 已实现。下一步是由 Agent Runtime
-传入结构化命令，并补上已批准 Workspace 快照的文件上传和产物回传。
+`OpenSandboxProvider` 的生命周期和命令 SSE 已实现。当前 Agent 第一版只支持一次
+结构化 `run_code` 调用；Workspace 快照、文件产物和多工具循环留给后续 Agent Runtime。
 
 Apache-2.0 · 牧之
