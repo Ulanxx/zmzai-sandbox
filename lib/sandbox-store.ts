@@ -1,0 +1,106 @@
+import type { CreateRunInput, RunEvent, RunStatus, SandboxRun } from "./sandbox-types";
+
+type Store = Map<string, SandboxRun>;
+
+const globalStore = globalThis as typeof globalThis & { __zmzaiSandboxRuns?: Store };
+const runs: Store = globalStore.__zmzaiSandboxRuns ?? new Map();
+globalStore.__zmzaiSandboxRuns = runs;
+
+function now() {
+  return new Date().toISOString();
+}
+
+function event(kind: RunEvent["kind"], message: string): RunEvent {
+  return { id: crypto.randomUUID(), at: now(), kind, message };
+}
+
+function addEvent(run: SandboxRun, kind: RunEvent["kind"], message: string) {
+  run.events.push(event(kind, message));
+}
+
+export function listRuns() {
+  return [...runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function getRun(runId: string) {
+  return runs.get(runId);
+}
+
+export function createRun(input: CreateRunInput) {
+  const run: SandboxRun = {
+    id: `run_${crypto.randomUUID().slice(0, 8)}`,
+    task: input.task,
+    model: input.model,
+    status: "queued",
+    createdAt: now(),
+    provider: process.env.OPEN_SANDBOX_URL ? "opensandbox" : "demo",
+    events: [event("system", "任务已进入沙箱队列")],
+    artifacts: [],
+  };
+  runs.set(run.id, run);
+  return run;
+}
+
+export function updateRun(runId: string, status: RunStatus, message?: string, exitCode?: number) {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+
+  run.status = status;
+  if (status === "running" && !run.startedAt) run.startedAt = now();
+  if (["succeeded", "failed", "cancelled"].includes(status)) {
+    run.finishedAt = now();
+    run.exitCode = exitCode;
+  }
+  if (message) addEvent(run, status === "failed" ? "stderr" : status === "running" ? "stdout" : "status", message);
+  return run;
+}
+
+export function appendRunEvent(runId: string, kind: RunEvent["kind"], message: string) {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+  addEvent(run, kind, message);
+  return run;
+}
+
+export function addArtifact(runId: string, name: string) {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+  run.artifacts.push(name);
+  addEvent(run, "artifact", `产物已生成：${name}`);
+  return run;
+}
+
+export function cancelRun(runId: string) {
+  const run = runs.get(runId);
+  if (!run || ["succeeded", "failed", "cancelled"].includes(run.status)) return run;
+  return updateRun(runId, "cancelled", "用户取消了这次运行");
+}
+
+export function startDemoRun(runId: string) {
+  const run = runs.get(runId);
+  if (!run) return;
+
+  updateRun(runId, "running", "Sandbox Runner 已分配临时执行环境");
+  const steps = [
+    [500, "读取 Workspace 快照"],
+    [1200, "启动 Node.js + TypeScript 执行镜像"],
+    [2100, "执行任务脚本"],
+    [3000, "收集 stdout、stderr 和产物"],
+  ] as const;
+
+  for (const [delay, message] of steps) {
+    setTimeout(() => {
+      const current = runs.get(runId);
+      if (!current || ["succeeded", "failed", "cancelled"].includes(current.status)) return;
+      appendRunEvent(runId, "stdout", message);
+    }, delay);
+  }
+
+  setTimeout(() => {
+    const current = runs.get(runId);
+    if (!current || current.status === "cancelled") return;
+    addArtifact(runId, "task-report.md");
+    updateRun(runId, "succeeded", "任务完成，沙箱已清理", 0);
+  }, 3900);
+}
+
