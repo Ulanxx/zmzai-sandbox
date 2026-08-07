@@ -1,4 +1,5 @@
 type RelayUser = { id: string; name: string; email: string; role: string };
+export type RelayModel = { model: string; maxInputTokens?: number; maxOutputTokens?: number; allowedReasoningEfforts?: string[] };
 
 const authUrl = () => (process.env.AUTH_URL?.trim() || "https://auth.zmzai.cloud").replace(/\/$/, "");
 const relayUrl = () => (process.env.RELAY_URL?.trim() || "https://m.zmzai.cloud/api/v1").replace(/\/$/, "");
@@ -30,6 +31,17 @@ export async function relayRequest(request: Request, path: string, init?: Reques
     headers: forwardedHeaders(request, init?.headers),
     cache: "no-store",
     signal: init?.signal ?? AbortSignal.timeout(120_000),
+  });
+}
+
+export async function getRelayModels(request: Request) {
+  const response = await relayRequest(request, "/models", { method: "GET" });
+  const body = (await response.json().catch(() => null)) as { models?: unknown } | null;
+  if (!response.ok) throw new Error(`Relay 模型目录返回 HTTP ${response.status}`);
+  const models = Array.isArray(body?.models) ? body.models : [];
+  return models.filter((model): model is RelayModel => {
+    if (!model || typeof model !== "object") return false;
+    return typeof (model as { model?: unknown }).model === "string";
   });
 }
 

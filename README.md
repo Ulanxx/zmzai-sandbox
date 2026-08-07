@@ -1,30 +1,41 @@
-# 沙箱场 · zmzai cloud
+# ZMZAI Sandbox
 
-> 代码执行与 Agent 实验的沙箱
+> 面向 ZMZAI Agent 的临时、受限代码执行层。
 
-zmzai cloud 牧之 产品矩阵的子产品（字母 **Z**）。
+这个仓库的主要产物是开发者接入文档和 Sandbox Runner API。`z.zmzai.cloud` 上的页面只是一个用于验证链路的示例客户端，不是 Agent 必须依赖的产品界面。
+
+## 从这里开始
+
+- [文档总览](docs/README.md)
+- [第一次执行：让 Agent 在沙箱中回答 `1+1`](docs/tutorials/first-authenticated-run.md)
+- [接入 ZMZAI Agent](docs/how-to/integrate-agent.md)
+- [HTTP 与 SSE API 参考](docs/reference/http-api.md)
+- [环境变量参考](docs/reference/configuration.md)
+- [认证、Relay 与沙箱边界](docs/explanation/trust-boundaries.md)
+
+## 当前可用能力
+
+- 登录会话鉴权，用户不填写或接触任何模型 API Key；
+- 通过 `m.zmzai.cloud` Relay 获取用户可用模型并完成模型调用与额度结算；
+- 将自然语言任务转换为一次经过校验的结构化 `run_code` 命令；
+- 在私有 OpenSandbox 中创建临时执行环境，默认禁网、限时、限 CPU 和内存；
+- 通过 Server-Sent Events 接收 stdout、stderr 和状态事件；
+- 查询、取消和清理运行记录。
+
+## 当前边界
+
+当前实现是控制台验证闭环，不是稳定的第三方 SDK：运行记录保存在进程内存中，提交接口使用登录 Cookie，单次运行只支持一个 `run_code` 工具调用。Workspace 快照、文件产物、多工具循环和服务间签发的 Agent Token 仍在设计中，见 [稳定 Runner API 设计](docs/superpowers/specs/agent-runner-api-design.md)。
+
+OpenSandbox 只应监听服务器回环地址或私网地址。当前部署使用 Docker `runc`，不能把它描述为 VM、gVisor 或强多租户隔离。
+
+## 本地开发
 
 ```bash
 pnpm install
+cp .env.example .env.local
 pnpm dev
 ```
 
-## 当前状态
-
-当前版本是 Sandbox Runner 控制台的第一条可验证闭环：
-
-- 登录后读取 Relay 可用模型，并创建一次 Agent 运行；
-- 由 Relay 生成结构化 `run_code` 命令并在 OpenSandbox 中执行；
-- 通过 Server-Sent Events 接收实时事件流；
-- 取消排队中或执行中的任务；
-- 查看退出码和生成的产物；
-- 通过 Provider 边界接入 OpenSandbox。
-- `GET /api/provider` 提供 OpenSandbox 配置和健康检查。
-
-用户不在 Sandbox 输入 API Key。登录会话由 `auth.zmzai.cloud` 校验，模型调用继续
-通过 `m.zmzai.cloud` 按用户额度结算。未登录时控制台只显示登录入口，不会返回模型目录。
-
-`OpenSandboxProvider` 的生命周期和命令 SSE 已实现。当前 Agent 第一版只支持一次
-结构化 `run_code` 调用；Workspace 快照、文件产物和多工具循环留给后续 Agent Runtime。
+完整的服务端配置、生产部署和排错步骤见 [自建 OpenSandbox](docs/how-to/self-host-opensandbox.md)。
 
 Apache-2.0 · 牧之

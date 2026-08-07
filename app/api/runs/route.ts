@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { commandForAgent, imageForAgent, planTask } from "@/lib/agent-planner";
-import { getSessionUser } from "@/lib/relay-client";
+import { getRelayModels, getSessionUser } from "@/lib/relay-client";
 import { createRun, listRuns, updateRun } from "@/lib/sandbox-store";
 import { runOpenSandboxCommand } from "@/lib/opensandbox-provider";
 
@@ -24,6 +24,15 @@ export async function POST(request: Request) {
   }
 
   if (!model) return NextResponse.json({ error: "请选择模型" }, { status: 400 });
+  let availableModels;
+  try {
+    availableModels = await getRelayModels(request);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "模型目录不可用" }, { status: 503 });
+  }
+  if (!availableModels.some((item) => item.model === model)) {
+    return NextResponse.json({ error: "所选模型不可用，请重新加载模型目录" }, { status: 400 });
+  }
   const run = createRun({ task, model, userId: user.id });
   updateRun(run.id, "running", `已登录为 ${user.name}，正在请求 Agent 规划命令`);
   void executeRun(request, run.id, model, task);
