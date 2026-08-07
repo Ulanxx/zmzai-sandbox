@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   if (run.provider === "demo") {
     startDemoRun(run.id);
   } else {
-    updateRun(run.id, "failed", "OpenSandbox 地址已配置，但 Provider 适配器尚未接入", 1);
+    updateRun(run.id, "failed", "OpenSandbox Provider 已就绪，控制台任务尚未绑定 Agent command", 1);
   }
   return NextResponse.json({ run }, { status: 201 });
 }

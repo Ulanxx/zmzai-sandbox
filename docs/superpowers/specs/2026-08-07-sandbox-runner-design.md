@@ -150,16 +150,15 @@ API 只接受任务输入、revision 引用和策略引用。调用方不能传�
 - 演示 Provider 的完整状态流；
 - 产物和错误状态展示。
 
-真实 OpenSandbox Provider 尚未接入。设置 `OPEN_SANDBOX_URL` 时，系统会明确返回“Provider 尚未接入”的失败状态，不会让任务无限排队。
+OpenSandbox HTTP Provider 已实现生命周期创建、Execd endpoint 解析、命令 SSE 消费和结束清理。控制台暂不把自然语言任务直接转成 shell 命令；设置 `OPEN_SANDBOX_URL` 时，控制台仍会明确返回“Provider 尚未接入任务编排”的失败状态，不会让任务无限排队。
 
 ## 10. OpenSandbox 接入顺序
 
-1. OpenSandbox Server 私网部署和 `/ping` 健康检查。
-2. 创建临时 Sandbox，并设置 Node 镜像、TTL 和资源限制。
+1. OpenSandbox Server 私网部署和生命周期健康检查。
+2. 将 Agent 的结构化命令接入 Provider。
 3. 通过 Execd API 写入 Workspace 快照。
 4. 执行命令并消费 stdout / stderr SSE。
 5. 通过文件 API 收集 allowlist 产物。
 6. 取消和超时时终止 Sandbox。
 7. 统一映射 OpenSandbox 错误为 ZMZAI 错误码。
 8. 增加端到端测试，验证清理、网络拒绝和资源限制。
-
