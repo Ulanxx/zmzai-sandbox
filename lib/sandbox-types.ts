@@ -9,6 +9,7 @@ export type RunEvent = {
 
 export type SandboxRun = {
   id: string;
+  userId: string;
   task: string;
   model: string;
   status: RunStatus;
@@ -22,7 +23,7 @@ export type SandboxRun = {
 };
 
 export type CreateRunInput = {
+  userId: string;
   task: string;
   model: string;
 };
-

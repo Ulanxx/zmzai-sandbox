@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RunStatus, SandboxRun } from "@/lib/sandbox-types";
 
+type SessionUser = { id: string; name: string; email: string };
+type RelayModel = { model: string; maxInputTokens: number; maxOutputTokens: number; allowedReasoningEfforts: string[] };
+
 const statusLabels: Record<RunStatus, string> = {
   queued: "排队中",
   running: "执行中",
@@ -33,7 +36,10 @@ export function SandboxConsole() {
   const [runs, setRuns] = useState<SandboxRun[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [task, setTask] = useState("");
-  const [model, setModel] = useState("relay-default");
+  const [model, setModel] = useState("");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [models, setModels] = useState<RelayModel[]>([]);
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +54,33 @@ export function SandboxConsole() {
   }, []);
 
   useEffect(() => {
-    void refreshRuns();
+    let cancelled = false;
+    void (async () => {
+      const sessionResponse = await fetch("/api/session", { cache: "no-store" });
+      if (cancelled) return;
+      if (!sessionResponse.ok) {
+        setIsLoadingSession(false);
+        return;
+      }
+      const session = (await sessionResponse.json()) as { user?: SessionUser };
+      if (!session.user) {
+        setIsLoadingSession(false);
+        return;
+      }
+      setUser(session.user);
+      const modelResponse = await fetch("/api/models", { cache: "no-store" });
+      if (modelResponse.ok) {
+        const data = (await modelResponse.json()) as { models?: RelayModel[] };
+        const available = data.models ?? [];
+        setModels(available);
+        setModel((current) => current || available[0]?.model || "");
+      } else {
+        setError("模型目录暂时不可用");
+      }
+      setIsLoadingSession(false);
+      void refreshRuns();
+    })();
+    return () => { cancelled = true; };
   }, [refreshRuns]);
 
   useEffect(() => {
@@ -64,6 +96,14 @@ export function SandboxConsole() {
 
   async function submitRun(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!user) {
+      setError("请先登录后再运行任务");
+      return;
+    }
+    if (!model) {
+      setError("当前没有可用模型");
+      return;
+    }
     if (task.trim().length < 3) {
       setError("先写下要完成的任务");
       return;
@@ -75,8 +115,9 @@ export function SandboxConsole() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task, model }),
     });
-    const data = (await response.json()) as { run?: SandboxRun; error?: string };
+    const data = (await response.json()) as { run?: SandboxRun; error?: string; loginUrl?: string };
     if (!response.ok || !data.run) {
+      if (response.status === 401 && data.loginUrl) window.location.href = `${data.loginUrl}?next=${encodeURIComponent(window.location.href)}`;
       setError(data.error ?? "创建任务失败");
       setIsSubmitting(false);
       return;
@@ -105,7 +146,7 @@ export function SandboxConsole() {
             <h1>沙箱场</h1>
           </div>
         </div>
-        <div className="header-meta"><span className="connection-dot" /><span>本地 Runner</span><span className="meta-separator">·</span><span>并发 {activeCount}/1</span></div>
+        <div className="header-meta"><span className="connection-dot" /><span>{user ? user.name : isLoadingSession ? "正在检查登录" : "未登录"}</span><span className="meta-separator">·</span><span>并发 {activeCount}/1</span>{!user && !isLoadingSession ? <a className="header-login" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent("https://z.zmzai.cloud/")}`}>登录</a> : null}</div>
       </header>
 
       <section className="console-intro">
@@ -119,8 +160,8 @@ export function SandboxConsole() {
           <label className="sr-only" htmlFor="task">任务描述</label>
           <textarea id="task" value={task} onChange={(event) => setTask(event.target.value)} placeholder="例如：读取当前 Workspace 的资料，整理成 Markdown 报告并保存。" rows={3} />
           <div className="composer-actions">
-            <label className="model-select"><span>模型</span><select value={model} onChange={(event) => setModel(event.target.value)}><option value="relay-default">relay-default</option><option value="relay-coder">relay-coder</option></select></label>
-            <button className="btn-primary" disabled={isSubmitting} type="submit">{isSubmitting ? "创建中…" : "开始运行 →"}</button>
+            <label className="model-select"><span>模型</span><select value={model} onChange={(event) => setModel(event.target.value)} disabled={!user || !models.length}><option value="">{isLoadingSession ? "检查登录…" : models.length ? "选择模型" : "暂无可用模型"}</option>{models.map((item) => <option key={item.model} value={item.model}>{item.model}</option>)}</select></label>
+            <button className="btn-primary" disabled={isSubmitting || !user || !model} type="submit">{isSubmitting ? "创建中…" : "开始运行 →"}</button>
           </div>
           {error ? <p className="form-error">{error}</p> : null}
         </form>
@@ -144,4 +185,3 @@ export function SandboxConsole() {
     </main>
   );
 }
-

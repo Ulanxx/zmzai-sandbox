@@ -18,17 +18,19 @@ function addEvent(run: SandboxRun, kind: RunEvent["kind"], message: string) {
   run.events.push(event(kind, message));
 }
 
-export function listRuns() {
-  return [...runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export function listRuns(userId: string) {
+  return [...runs.values()].filter((run) => run.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function getRun(runId: string) {
-  return runs.get(runId);
+export function getRun(runId: string, userId?: string) {
+  const run = runs.get(runId);
+  return run && (!userId || run.userId === userId) ? run : undefined;
 }
 
 export function createRun(input: CreateRunInput) {
   const run: SandboxRun = {
     id: `run_${crypto.randomUUID().slice(0, 8)}`,
+    userId: input.userId,
     task: input.task,
     model: input.model,
     status: "queued",
@@ -103,4 +105,3 @@ export function startDemoRun(runId: string) {
     updateRun(runId, "succeeded", "任务完成，沙箱已清理", 0);
   }, 3900);
 }
-

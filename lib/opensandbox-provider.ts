@@ -5,6 +5,7 @@ export type OpenSandboxCommand = {
   cwd?: string;
   timeoutMs?: number;
   envs?: Record<string, string>;
+  image?: string;
 };
 
 export type OpenSandboxCommandResult = {
@@ -96,7 +97,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
   const createResponse = await lifecycleRequest("/sandboxes", {
     method: "POST",
     body: JSON.stringify({
-      image: { uri: process.env.OPEN_SANDBOX_IMAGE?.trim() || "node:22-alpine" },
+      image: { uri: input.image || process.env.OPEN_SANDBOX_IMAGE?.trim() || "node:22-alpine" },
       timeout: Math.max(60, Math.ceil((input.timeoutMs ?? 60000) / 1000) + 30),
       resourceLimits: {
         cpu: process.env.OPEN_SANDBOX_CPU_LIMIT?.trim() || "500m",

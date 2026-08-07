@@ -1,11 +1,14 @@
 import { getRun } from "@/lib/sandbox-store";
+import { getSessionUser } from "@/lib/relay-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_: Request, { params }: { params: Promise<{ runId: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
-  if (!getRun(runId)) return new Response("运行不存在", { status: 404 });
+  const user = await getSessionUser(request).catch(() => null);
+  if (!user) return new Response("请先登录", { status: 401 });
+  if (!getRun(runId, user.id)) return new Response("运行不存在", { status: 404 });
 
   const encoder = new TextEncoder();
   let lastEventCount = 0;
@@ -14,7 +17,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ runId: str
   const stream = new ReadableStream({
     start(controller) {
       timer = setInterval(() => {
-        const run = getRun(runId);
+        const run = getRun(runId, user.id);
         if (!run) {
           controller.close();
           if (timer) clearInterval(timer);
@@ -44,4 +47,3 @@ export async function GET(_: Request, { params }: { params: Promise<{ runId: str
     },
   });
 }
-
