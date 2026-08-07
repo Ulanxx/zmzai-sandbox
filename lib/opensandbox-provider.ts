@@ -116,7 +116,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
     const response = await fetch(`${endpointUrl(endpoint.endpoint)}/command`, {
       method: "POST",
       headers: { Accept: "text/event-stream", "Content-Type": "application/json", ...(endpoint.headers ?? {}) },
-      body: JSON.stringify({ command: input.command, cwd: input.cwd || "/workspace", timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }),
+      body: JSON.stringify({ command: input.command, ...(input.cwd ? { cwd: input.cwd } : {}), timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }),
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`OpenSandbox Execd ${response.status}: ${await readError(response)}`);
@@ -146,4 +146,3 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
     await deleteSandbox(sandboxId).catch(() => undefined);
   }
 }
-
