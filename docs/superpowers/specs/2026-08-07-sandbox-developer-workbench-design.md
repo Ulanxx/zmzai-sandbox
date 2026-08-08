@@ -220,7 +220,7 @@ preview 资源策略为：最大 body 32 KiB、task 3..2000 字符、单次 Agen
 
 用户文本永远不能直接成为 shell 命令。Relay 返回的 Agent tool call 仍需 Sandbox 本地 schema 校验，语言、代码大小和超时都受固定上限约束。
 
-OpenSandbox 继续只监听回环/私网，默认网络 deny，当前 Docker runtime 为 `runc`。`RELAY_SANDBOX_SERVICE_SECRET` 和 `OPEN_SANDBOX_API_KEY` 只进入服务端环境变量，不进入浏览器、文档示例或日志。
+OpenSandbox 继续只监听回环/私网，默认网络 deny，当前 Docker runtime 为 `runc`。`RELAY_SANDBOX_SERVICE_SECRET_CURRENT`、可选的 `RELAY_SANDBOX_SERVICE_SECRET_PREVIOUS` 和 `OPEN_SANDBOX_API_KEY` 只进入服务端环境变量，不进入浏览器、文档示例或日志。
 
 ## 10. 页面状态和示例
 
