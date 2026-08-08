@@ -12,6 +12,7 @@
 - [HTTP 与 SSE API 参考](docs/reference/http-api.md)
 - [环境变量参考](docs/reference/configuration.md)
 - [认证、Relay 与沙箱边界](docs/explanation/trust-boundaries.md)
+- [线上开发者工作台](https://z.zmzai.cloud/developers)
 
 ## 当前可用能力
 
@@ -25,6 +26,8 @@
 ## 当前边界
 
 当前实现是控制台验证闭环，不是稳定的第三方 SDK：运行记录保存在进程内存中，提交接口使用登录 Cookie，单次运行只支持一个 `run_code` 工具调用。Workspace 快照、文件产物、多工具循环和服务间签发的 Agent Token 仍在设计中，见 [稳定 Runner API 设计](docs/superpowers/specs/agent-runner-api-design.md)。
+
+开发者预览现已支持创建只授权 Sandbox Runner 的 `sandbox_key`（`zsk_...`）并通过 `POST /api/v1/runs` 调用。密钥明文只会在创建时展示一次，模型调用、额度和结算仍由 Relay 统一负责。服务端接入和完整请求示例位于 [开发者工作台](https://z.zmzai.cloud/developers)。
 
 OpenSandbox 只应监听服务器回环地址或私网地址。当前部署使用 Docker `runc`，不能把它描述为 VM、gVisor 或强多租户隔离。
 

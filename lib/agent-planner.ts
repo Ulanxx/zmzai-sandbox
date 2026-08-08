@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { relayRequest } from "@/lib/relay-client";
+import { relayRequest, relaySandboxRequest } from "@/lib/relay-client";
 
 export type AgentCommand = {
   language: "javascript" | "python" | "shell";
@@ -44,10 +44,17 @@ function parseContent(content: unknown): AgentCommand {
 }
 
 export async function planTask(request: Request, model: string, task: string) {
-  const response = await relayRequest(request, "/chat/completions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  const response = await relayRequest(request, "/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(agentRequest(model, task)) });
+  return parsePlanResponse(response);
+}
+
+export async function planSandboxTask(sandboxKey: string, model: string, task: string) {
+  const response = await relaySandboxRequest(sandboxKey, agentRequest(model, task));
+  return parsePlanResponse(response);
+}
+
+function agentRequest(model: string, task: string) {
+  return {
       model,
       stream: false,
       max_tokens: 500,
@@ -61,9 +68,10 @@ export async function planTask(request: Request, model: string, task: string) {
       ],
       tools: [runCodeTool],
       tool_choice: { type: "function", function: { name: "run_code" } },
-    }),
-  });
+  };
+}
 
+async function parsePlanResponse(response: Response) {
   const body = (await response.json().catch(() => null)) as { error?: string; choices?: Array<{ message?: { content?: unknown; tool_calls?: Array<{ function?: { arguments?: unknown } }> } }> } | null;
   if (!response.ok) throw new Error(body?.error || `Relay 返回 HTTP ${response.status}`);
   const message = body?.choices?.[0]?.message;

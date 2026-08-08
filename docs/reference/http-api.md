@@ -2,6 +2,20 @@
 
 Base URL：`https://z.zmzai.cloud`。当前接口使用浏览器登录会话 Cookie，不接受用户提交的模型 API Key。
 
+## 开发者预览：`sandbox_key`
+
+登录后在 [开发者工作台](https://z.zmzai.cloud/developers) 创建 `zsk_...`。它只能调用 Sandbox Runner，不能直接调用 Relay 的 `/api/v1/chat/completions` 或 `/api/v1/models`。
+
+```bash
+curl https://z.zmzai.cloud/api/v1/runs \
+  -H "Authorization: Bearer zsk_..." \
+  -H "Idempotency-Key: <16-128-character-unique-value>" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"计算 1+1 并输出结果","model":"<model-id>"}'
+```
+
+`GET /api/v1/runs/:runId`、`GET /api/v1/runs/:runId/events` 和 `POST /api/v1/runs/:runId/cancel` 使用同一 `Authorization`。当前开发者预览将运行和幂等记录保存在进程内存中，服务重启后不保证保留；不要把它当作持久化 SDK 承诺。
+
 ## `GET /api/session`
 
 读取当前登录用户。

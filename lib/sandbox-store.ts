@@ -27,10 +27,16 @@ export function getRun(runId: string, userId?: string) {
   return run && (!userId || run.userId === userId) ? run : undefined;
 }
 
+export function getRunForSandboxKey(runId: string, sandboxKeyId: string) {
+  const run = runs.get(runId);
+  return run?.ownerSandboxKeyId === sandboxKeyId ? run : undefined;
+}
+
 export function createRun(input: CreateRunInput) {
   const run: SandboxRun = {
     id: `run_${crypto.randomUUID().slice(0, 8)}`,
     userId: input.userId,
+    ownerSandboxKeyId: input.ownerSandboxKeyId,
     task: input.task,
     model: input.model,
     status: "queued",

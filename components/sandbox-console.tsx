@@ -146,7 +146,7 @@ export function SandboxConsole() {
             <h1>沙箱场</h1>
           </div>
         </div>
-        <div className="header-meta"><span className="connection-dot" /><span>{user ? user.name : isLoadingSession ? "正在检查登录" : "未登录"}</span><span className="meta-separator">·</span><span>并发 {activeCount}/1</span>{!user && !isLoadingSession ? <a className="header-login" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent("https://z.zmzai.cloud/")}`}>登录</a> : null}</div>
+        <div className="header-meta"><span className="connection-dot" /><span>{user ? user.name : isLoadingSession ? "正在检查登录" : "未登录"}</span><span className="meta-separator">·</span><span>并发 {activeCount}/1</span><a className="header-login" href="/developers">开发者文档</a>{!user && !isLoadingSession ? <a className="header-login" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent("https://z.zmzai.cloud/")}`}>登录</a> : null}</div>
       </header>
 
       <section className="console-intro">
