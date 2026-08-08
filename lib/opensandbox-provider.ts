@@ -73,7 +73,9 @@ function parseSseChunk(buffer: string, onEvent: (event: { type?: string; text?: 
   const records = buffer.split(/\n\n/);
   const remainder = records.pop() ?? "";
   for (const record of records) {
-    const data = record.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+    const dataLines = record.split("\n").filter((line) => line.startsWith("data:"));
+    // OpenSandbox Execd writes raw JSON records; standard SSE proxies add data: prefixes.
+    const data = dataLines.length > 0 ? dataLines.map((line) => line.slice(5).trim()).join("\n") : record.trim();
     if (!data) continue;
     try {
       onEvent(JSON.parse(data) as { type?: string; text?: string; error?: { evalue?: string } });
