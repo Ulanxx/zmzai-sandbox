@@ -69,6 +69,8 @@ revokedAt: Date | null
 
 生成格式为 `zsk_` 加随机高熵字符串。明文不落库、不写日志、不在列表接口返回。撤销是终态，不能恢复；API 只有撤销语义，记录保留用于审计。Relay 以原子条件更新 `status=active` 完成解析并更新 `lastUsedAt`，撤销完成后，后续解析一定失败。
 
+Relay 的 `Usage` 模型必须迁移为 `callerKind: apikey | session | sandbox_key`，新增可空且有索引的 `sandboxKeyId: ObjectId | null`。历史 usage 记录保持原值并以 `sandboxKeyId=null` 兼容；新 sandbox 调用同时写入 `callerKind=sandbox_key`、`callerId=SandboxKey._id`、`sandboxKeyId=SandboxKey._id`、`apiKeyId=null`。现有 usage 唯一索引 `(callerKind, callerId, requestId)` 保持不变，确保同一个 key 的 Relay 规划请求不会重复计费。
+
 ## 6. Relay 接口
 
 登录态接口：
@@ -93,16 +95,16 @@ DELETE /api/me/sandbox-keys/:id
 }
 ```
 
-服务间接口使用 `Authorization: Bearer <RELAY_SANDBOX_SERVICE_SECRET>`，并接收 `sandboxKey`。至少需要：
+服务间接口使用 `Authorization: Bearer <RELAY_SANDBOX_SERVICE_SECRET_CURRENT>`，并接收 `sandboxKey`。至少需要：
 
 ```text
 POST /api/internal/sandbox/resolve
 POST /api/internal/sandbox/chat
 ```
 
-内部接口仅接受来自 Sandbox 的服务密钥。它们只部署在 Relay 私网地址，例如 `http://127.0.0.1:3002`，不能由 Caddy 暴露到公网。服务端必须配置 `RELAY_SANDBOX_SERVICE_SECRET`；生产环境缺失该变量时 Relay 和 Sandbox 都拒绝启动。Relay 使用固定时序比较服务密钥，Sandbox 请求超时为 120 秒，日志和 trace 必须脱敏 `Authorization`、`sandboxKey` 和完整 key 值。
+内部接口仅接受来自 Sandbox 的服务密钥。它们只部署在 Relay 私网地址，例如 `http://127.0.0.1:3002`，不能由 Caddy 暴露到公网。Relay 和 Sandbox 都必须配置 `RELAY_SANDBOX_SERVICE_SECRET_CURRENT`；生产环境缺失时拒绝启动。Relay 可选读取 `RELAY_SANDBOX_SERVICE_SECRET_PREVIOUS`，仅在显式轮换窗口内同时接受 current/previous。Sandbox 只发送 current；窗口结束后先移除 Relay previous，再轮换 Sandbox current。Relay 使用固定时序比较服务密钥，Sandbox 请求超时为 120 秒，日志和 trace 必须脱敏 `Authorization`、`sandboxKey` 和完整 key 值。内部路由不接受 Cookie 或 `zrk_` 作为认证。
 
-密钥轮换使用 `RELAY_SANDBOX_SERVICE_SECRET_CURRENT` 与可选的 `RELAY_SANDBOX_SERVICE_SECRET_PREVIOUS`。两者都可验证时为轮换窗口；窗口结束后删除 previous。Relay 的内部审计记录服务主体 `sandbox`，不得把它当作用户身份。
+Relay 的内部审计记录服务主体 `sandbox`，不得把它当作用户身份。无、错误或已经移除的 previous service secret 一律返回 `401 INTERNAL_SERVICE_UNAUTHORIZED`。生产部署使用回环/私网加 TLS；跨主机时必须使用 mTLS 或等价的网络身份校验。
 
 `resolve` 请求和响应：
 
@@ -152,9 +154,28 @@ POST /api/v1/runs/:runId/cancel
 }
 ```
 
-请求必须包含 `Idempotency-Key`，格式为 16 到 128 个可打印 ASCII 字符。Sandbox 按 `(sandboxKeyId, Idempotency-Key)` 保存 SHA-256 请求指纹和结果 24 小时：同一 key、同一指纹返回原始 `201` 响应；同一 key、不同指纹返回 `409 IDEMPOTENCY_CONFLICT`；其他 key 不能复用该记录。服务重启前的 preview 实现若丢失幂等记录，客户端不得自动重试，应先查询已知 `runId`。
+请求必须包含 `Idempotency-Key`，格式为 16 到 128 个可打印 ASCII 字符。Sandbox 使用 MongoDB 中的持久化 `SandboxSubmission` 记录，唯一索引为 `(ownerSandboxKeyId, idempotencyKey)`，保存 `requestHash`、`runId`、初始响应、submission 状态与 24 小时 `expiresAt`。相同 key、相同指纹返回已保存的原始 `201` 响应；同一 key、不同指纹返回 `409 IDEMPOTENCY_CONFLICT`；其他 key 不能复用该记录。记录必须在 Relay 规划和 OpenSandbox 创建前以原子 upsert 落库。进程重启时，后台恢复器按存储的 provider sandbox id 和状态恢复监控；无法恢复的 submission 标记为 `failed` 并返回 `SANDBOX_RESTARTED` 终态，不得重新执行或重新计费。这样同一幂等键在 24 小时内可安全重试。
 
 服务端先解析 `sandbox_key`，把不可变的 `ownerSandboxKeyId` 写入运行记录，再调用 Relay 内部 chat；任何认证、模型、额度或 schema 错误都在创建 OpenSandbox 前失败。服务 API 的读、SSE 和取消都必须匹配同一个 `ownerSandboxKeyId`，而非仅匹配 `userId`。同一用户的另一把 key 无权读取、订阅或取消该 run。被撤销 key 的所有服务 API 请求立即返回 `401`；登录控制台仍可按用户身份查看自己的历史运行。
+
+`runId` 格式为 `run_<uuid>`。服务 API 返回的 run 不暴露 `ownerSandboxKeyId`，但持久化记录必须保存它。公开字段为：
+
+```json
+{
+  "id":"run_<uuid>",
+  "task":"计算 1+1 并输出结果",
+  "model":"model-id",
+  "status":"queued|planning|running|cancellation_requested|succeeded|failed|cancelled",
+  "createdAt":"...",
+  "startedAt":"...",
+  "finishedAt":"...",
+  "exitCode":0,
+  "error":{"code":"...","message":"..."},
+  "artifacts":[]
+}
+```
+
+允许的状态迁移为 `queued -> planning -> running -> succeeded|failed`，或在 `queued|planning|running` 任一阶段进入 `cancellation_requested -> cancelled|succeeded|failed`。取消请求成功只返回 `202` 与 `{ "run": { "status": "cancellation_requested", ... } }`；详情与终态事件才是最终结果。
 
 现有 Cookie 控制台接口 `/api/runs` 保留，前端页面继续使用它。服务间 API 不应依赖浏览器 Cookie。
 
