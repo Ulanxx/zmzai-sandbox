@@ -43,7 +43,7 @@
 Agent
   -> Sandbox /api/v1/runs
        Authorization: Bearer zsk_...
-  -> Sandbox 使用 RELAY_SANDBOX_SERVICE_SECRET 调 Relay 内部解析接口
+  -> Sandbox 使用 RELAY_SANDBOX_SERVICE_SECRET_CURRENT 调 Relay 内部解析接口
   -> Relay 以 sandbox key 绑定的 userId 做模型路由、额度预留、结算和审计
   -> Sandbox Provider 创建 OpenSandbox 临时环境
   -> Sandbox 返回运行状态和 SSE
