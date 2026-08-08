@@ -33,6 +33,11 @@ export async function persistedRuns(userId: string, ownerSandboxKeyId?: string) 
   return docs.map((doc) => doc.payload);
 }
 
+export async function activeRunCount(ownerSandboxKeyId?: string) {
+  await connectMongo();
+  return SandboxRunModel.countDocuments({ ...(ownerSandboxKeyId ? { ownerSandboxKeyId } : {}), "payload.status": { $in: ["queued", "running", "waiting_approval"] } });
+}
+
 export async function claimSubmission(ownerSandboxKeyId: string, idempotencyKey: string, requestHash: string, runId: string) {
   await connectMongo();
   try {
@@ -44,4 +49,9 @@ export async function claimSubmission(ownerSandboxKeyId: string, idempotencyKey:
     if (!current) throw error;
     return current.requestHash === requestHash ? { created: false as const, runId: current.runId } : { conflict: true as const };
   }
+}
+
+export async function existingSubmission(ownerSandboxKeyId: string, idempotencyKey: string) {
+  await connectMongo();
+  return SandboxSubmissionModel.findOne({ ownerSandboxKeyId, idempotencyKey }).lean();
 }

@@ -1,4 +1,5 @@
 const DEFAULT_EXECD_PORT = 44772;
+const MAX_OUTPUT_BYTES = 256 * 1024;
 
 export type OpenSandboxCommand = {
   command: string;
@@ -128,6 +129,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
 
     const stdout: string[] = [];
     const stderr: string[] = [];
+    let outputBytes = 0;
     let exitCode = 0;
     let buffer = "";
     const reader = response.body?.getReader();
@@ -138,14 +140,15 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
       if (chunk.done) break;
       buffer += decoder.decode(chunk.value, { stream: true });
       buffer = parseSseChunk(buffer, (event) => {
-        if (event.type === "stdout" && event.text) stdout.push(event.text);
-        if (event.type === "stderr" && event.text) stderr.push(event.text);
+        if (event.type === "stdout" && event.text) { outputBytes += Buffer.byteLength(event.text); if (outputBytes <= MAX_OUTPUT_BYTES) stdout.push(event.text); }
+        if (event.type === "stderr" && event.text) { outputBytes += Buffer.byteLength(event.text); if (outputBytes <= MAX_OUTPUT_BYTES) stderr.push(event.text); }
         if (event.type === "error") {
           stderr.push(event.error?.evalue || event.text || "OpenSandbox 执行失败");
           exitCode = 1;
         }
       });
     }
+    if (outputBytes > MAX_OUTPUT_BYTES) { stderr.push("输出超过 256 KiB 限制，已截断"); exitCode = 1; }
     return { sandboxId, stdout, stderr, exitCode };
   } finally {
     input.signal?.removeEventListener("abort", abort);

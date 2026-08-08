@@ -12,7 +12,11 @@ export async function POST(request: Request) {
   const input = readRunInput(await request.json().catch(() => null));
   if (!input) return NextResponse.json({ code: "INVALID_BODY", error: "task 需要 3 到 2000 个字符，且必须选择模型" }, { status: 400 });
   const result = await idempotentRun(caller, request.headers.get("idempotency-key"), input);
-  if ("error" in result) return NextResponse.json({ code: request.headers.get("idempotency-key") ? "IDEMPOTENCY_CONFLICT" : "INVALID_IDEMPOTENCY_KEY", error: result.error }, { status: request.headers.get("idempotency-key") ? 409 : 400 });
+  if ("error" in result) {
+    const message = result.error ?? "创建运行失败";
+    const concurrency = message.includes("运行中") || message.includes("并发");
+    return NextResponse.json({ code: concurrency ? "RATE_LIMITED" : request.headers.get("idempotency-key") ? "IDEMPOTENCY_CONFLICT" : "INVALID_IDEMPOTENCY_KEY", error: message }, { status: concurrency ? 429 : request.headers.get("idempotency-key") ? 409 : 400, headers: concurrency ? { "Retry-After": "15" } : undefined });
+  }
   if (!result.replayed) executeSandboxRun(result.run.id, request.headers.get("authorization")!.slice(7).trim(), input);
   return NextResponse.json({ run: result.run }, { status: 201, headers: { "Cache-Control": "no-store" } });
 }

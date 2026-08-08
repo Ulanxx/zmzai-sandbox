@@ -4,7 +4,7 @@ import { commandForAgent, imageForAgent, planSandboxTask } from "@/lib/agent-pla
 import { resolveSandboxCaller, type SandboxCaller } from "@/lib/relay-client";
 import { runOpenSandboxCommand } from "@/lib/opensandbox-provider";
 import { createRun, updateRun } from "@/lib/sandbox-store";
-import { claimSubmission, persistedRun } from "@/lib/persistent-runs";
+import { activeRunCount, claimSubmission, existingSubmission, persistedRun } from "@/lib/persistent-runs";
 import type { SandboxRun } from "@/lib/sandbox-types";
 
 const globalExecutions = globalThis as typeof globalThis & { __zmzaiSandboxExecutions?: Map<string, AbortController> };
@@ -29,6 +29,15 @@ export function readRunInput(body: unknown) {
 export async function idempotentRun(caller: SandboxCaller, idempotencyKey: string | null, input: { task: string; model: string }) {
   if (!idempotencyKey || !/^[\x21-\x7e]{16,128}$/.test(idempotencyKey)) return { error: "Idempotency-Key 必须是 16 到 128 个可打印字符" } as const;
   const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  const existing = await existingSubmission(caller.keyId, idempotencyKey);
+  if (existing) {
+    if (existing.requestHash !== fingerprint) return { error: "同一 Idempotency-Key 不能对应不同请求" } as const;
+    const run = await persistedRun(existing.runId, caller.keyId);
+    return run ? { run, replayed: true } as const : { error: "该请求正在恢复，请稍后查询 runId" } as const;
+  }
+  const [keyActive, totalActive] = await Promise.all([activeRunCount(caller.keyId), activeRunCount()]);
+  if (keyActive >= 1) return { error: "当前 sandbox_key 已有运行中的任务" } as const;
+  if (totalActive >= 3) return { error: "Sandbox 当前并发已满，请稍后重试" } as const;
   const runId = `run_${randomUUID().slice(0, 8)}`;
   const claimed = await claimSubmission(caller.keyId, idempotencyKey, fingerprint, runId);
   if ("conflict" in claimed) return { error: "同一 Idempotency-Key 不能对应不同请求" } as const;
