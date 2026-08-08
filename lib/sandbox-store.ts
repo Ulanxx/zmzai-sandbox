@@ -1,4 +1,5 @@
 import type { CreateRunInput, RunEvent, RunStatus, SandboxRun } from "./sandbox-types";
+import { persistRun } from "./persistent-runs";
 
 type Store = Map<string, SandboxRun>;
 
@@ -32,9 +33,9 @@ export function getRunForSandboxKey(runId: string, sandboxKeyId: string) {
   return run?.ownerSandboxKeyId === sandboxKeyId ? run : undefined;
 }
 
-export function createRun(input: CreateRunInput) {
+export function createRun(input: CreateRunInput, id = `run_${crypto.randomUUID().slice(0, 8)}`) {
   const run: SandboxRun = {
-    id: `run_${crypto.randomUUID().slice(0, 8)}`,
+    id,
     userId: input.userId,
     ownerSandboxKeyId: input.ownerSandboxKeyId,
     task: input.task,
@@ -46,6 +47,7 @@ export function createRun(input: CreateRunInput) {
     artifacts: [],
   };
   runs.set(run.id, run);
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }
 
@@ -60,6 +62,7 @@ export function updateRun(runId: string, status: RunStatus, message?: string, ex
     run.exitCode = exitCode;
   }
   if (message) addEvent(run, status === "failed" ? "stderr" : status === "running" ? "stdout" : "status", message);
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }
 
@@ -67,6 +70,7 @@ export function appendRunEvent(runId: string, kind: RunEvent["kind"], message: s
   const run = runs.get(runId);
   if (!run) return undefined;
   addEvent(run, kind, message);
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }
 
@@ -75,6 +79,7 @@ export function addArtifact(runId: string, name: string) {
   if (!run) return undefined;
   run.artifacts.push(name);
   addEvent(run, "artifact", `产物已生成：${name}`);
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }
 

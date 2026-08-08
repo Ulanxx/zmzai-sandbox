@@ -6,6 +6,7 @@ export type OpenSandboxCommand = {
   timeoutMs?: number;
   envs?: Record<string, string>;
   image?: string;
+  signal?: AbortSignal;
 };
 
 export type OpenSandboxCommandResult = {
@@ -112,6 +113,8 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
   if (!created.id) throw new Error("OpenSandbox 创建响应缺少 sandbox id");
 
   const sandboxId = created.id;
+  const abort = () => { void deleteSandbox(sandboxId).catch(() => undefined); };
+  input.signal?.addEventListener("abort", abort, { once: true });
   try {
     const endpoint = await getExecdEndpoint(sandboxId);
     const response = await fetch(`${endpointUrl(endpoint.endpoint)}/command`, {
@@ -119,6 +122,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
       headers: { Accept: "text/event-stream", "Content-Type": "application/json", ...(endpoint.headers ?? {}) },
       body: JSON.stringify({ command: input.command, ...(input.cwd ? { cwd: input.cwd } : {}), timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }),
       cache: "no-store",
+      signal: input.signal,
     });
     if (!response.ok) throw new Error(`OpenSandbox Execd ${response.status}: ${await readError(response)}`);
 
@@ -144,6 +148,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
     }
     return { sandboxId, stdout, stderr, exitCode };
   } finally {
+    input.signal?.removeEventListener("abort", abort);
     await deleteSandbox(sandboxId).catch(() => undefined);
   }
 }
