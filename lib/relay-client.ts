@@ -63,6 +63,24 @@ export async function relaySandboxRequest(sandboxKey: string, body: unknown) {
   return fetch(`${relayInternalUrl()}/api/internal/sandbox/chat`, { method: "POST", headers: sandboxServiceHeaders(), body: JSON.stringify({ sandboxKey, ...(body as object) }), cache: "no-store", signal: AbortSignal.timeout(120_000) });
 }
 
+export async function getSandboxModels(sandboxKey: string) {
+  const response = await fetch(`${relayInternalUrl()}/api/internal/sandbox/models`, {
+    method: "POST",
+    headers: sandboxServiceHeaders(),
+    body: JSON.stringify({ sandboxKey }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = (await response.json().catch(() => null)) as { code?: string; models?: unknown; error?: string } | null;
+  if (!response.ok) {
+    const error = new Error(body?.error || `Relay 模型目录返回 HTTP ${response.status}`);
+    Object.assign(error, { code: body?.code, status: response.status });
+    throw error;
+  }
+  const models = Array.isArray(body?.models) ? body.models : [];
+  return models.filter((model): model is RelayModel => Boolean(model) && typeof model === "object" && typeof (model as { model?: unknown }).model === "string");
+}
+
 export async function getRelayModels(request: Request) {
   const response = await relayRequest(request, "/models", { method: "GET" });
   const body = (await response.json().catch(() => null)) as { models?: unknown } | null;

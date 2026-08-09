@@ -11,12 +11,13 @@ function now() {
   return new Date().toISOString();
 }
 
-function event(kind: RunEvent["kind"], message: string): RunEvent {
-  return { id: crypto.randomUUID(), at: now(), kind, message };
+function event(sequence: number, kind: RunEvent["kind"], message: string): RunEvent {
+  return { id: crypto.randomUUID(), sequence, at: now(), kind, message };
 }
 
 function addEvent(run: SandboxRun, kind: RunEvent["kind"], message: string) {
-  run.events.push(event(kind, message));
+  const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
+  run.events.push(event(sequence, kind, message));
 }
 
 export function listRuns(userId: string) {
@@ -43,7 +44,7 @@ export function createRun(input: CreateRunInput, id = `run_${crypto.randomUUID()
     status: "queued",
     createdAt: now(),
     provider: process.env.OPEN_SANDBOX_URL ? "opensandbox" : "demo",
-    events: [event("system", "任务已进入沙箱队列")],
+    events: [event(1, "system", "任务已进入沙箱队列")],
     artifacts: [],
   };
   runs.set(run.id, run);

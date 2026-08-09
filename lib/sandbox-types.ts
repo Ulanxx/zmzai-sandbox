@@ -2,6 +2,7 @@ export type RunStatus = "queued" | "running" | "waiting_approval" | "succeeded" 
 
 export type RunEvent = {
   id: string;
+  sequence: number;
   at: string;
   kind: "system" | "stdout" | "stderr" | "status" | "artifact";
   message: string;
