@@ -8,6 +8,8 @@ export type OpenSandboxCommand = {
   envs?: Record<string, string>;
   image?: string;
   signal?: AbortSignal;
+  metadata?: Record<string, string>;
+  onSandboxCreated?: (sandboxId: string) => Promise<void> | void;
 };
 
 export type OpenSandboxCommandResult = {
@@ -109,13 +111,14 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
       },
       entrypoint: ["tail", "-f", "/dev/null"],
       networkPolicy: { defaultAction: "deny" },
-      metadata: { "zmzai.managed": "true" },
+      metadata: { "zmzai.managed": "true", ...(input.metadata ?? {}) },
     }),
   });
   const created = (await createResponse.json()) as { id?: string };
   if (!created.id) throw new Error("OpenSandbox 创建响应缺少 sandbox id");
 
   const sandboxId = created.id;
+  await input.onSandboxCreated?.(sandboxId);
   const abort = () => { void deleteSandbox(sandboxId).catch(() => undefined); };
   input.signal?.addEventListener("abort", abort, { once: true });
   try {

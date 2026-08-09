@@ -33,6 +33,22 @@ export async function persistedRuns(userId: string, ownerSandboxKeyId?: string) 
   return docs.map((doc) => doc.payload);
 }
 
+export async function requestPersistedCancellation(runId: string, ownerSandboxKeyId: string) {
+  await connectMongo();
+  const doc = await SandboxRunModel.findOne({ runId, ownerSandboxKeyId });
+  if (!doc) return undefined;
+  const run = doc.payload;
+  if (["succeeded", "failed", "cancelled"].includes(run.status)) return run;
+  if (run.status !== "cancellation_requested") {
+    const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
+    run.status = "cancellation_requested";
+    run.events.push({ id: crypto.randomUUID(), sequence, at: new Date().toISOString(), kind: "status", message: "正在取消并清理沙箱" });
+    doc.markModified("payload");
+    await doc.save();
+  }
+  return run;
+}
+
 export async function activeRunCount(ownerSandboxKeyId?: string) {
   await connectMongo();
   return SandboxRunModel.countDocuments({ ...(ownerSandboxKeyId ? { ownerSandboxKeyId } : {}), "payload.status": { $in: ["queued", "running", "waiting_approval"] } });

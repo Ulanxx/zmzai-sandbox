@@ -1,4 +1,4 @@
-export type RunStatus = "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
+export type RunStatus = "queued" | "planning" | "running" | "cancellation_requested" | "cleanup_pending" | "succeeded" | "failed" | "cancelled";
 
 export type RunEvent = {
   id: string;
@@ -19,6 +19,7 @@ export type SandboxRun = {
   startedAt?: string;
   finishedAt?: string;
   exitCode?: number;
+  failure?: { code: string; error: string; retryable: boolean };
   provider: "demo" | "opensandbox";
   events: RunEvent[];
   artifacts: string[];

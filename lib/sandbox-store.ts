@@ -56,13 +56,16 @@ export function updateRun(runId: string, status: RunStatus, message?: string, ex
   const run = runs.get(runId);
   if (!run) return undefined;
 
+  if (["succeeded", "failed", "cancelled"].includes(run.status)) return run;
+  if (run.status === "cancellation_requested" && status !== "cancelled") return run;
+
   run.status = status;
-  if (status === "running" && !run.startedAt) run.startedAt = now();
+  if (["planning", "running"].includes(status) && !run.startedAt) run.startedAt = now();
   if (["succeeded", "failed", "cancelled"].includes(status)) {
     run.finishedAt = now();
     run.exitCode = exitCode;
   }
-  if (message) addEvent(run, status === "failed" ? "stderr" : status === "running" ? "stdout" : "status", message);
+  if (message) addEvent(run, status === "failed" ? "stderr" : ["planning", "running"].includes(status) ? "stdout" : "status", message);
   void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }
@@ -87,7 +90,7 @@ export function addArtifact(runId: string, name: string) {
 export function cancelRun(runId: string) {
   const run = runs.get(runId);
   if (!run || ["succeeded", "failed", "cancelled"].includes(run.status)) return run;
-  return updateRun(runId, "cancelled", "用户取消了这次运行");
+  return updateRun(runId, "cancellation_requested", "正在取消并清理沙箱");
 }
 
 export function startDemoRun(runId: string) {

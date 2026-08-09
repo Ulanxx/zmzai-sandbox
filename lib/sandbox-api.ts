@@ -54,10 +54,17 @@ export function executeSandboxRun(runId: string, sandboxKey: string, input: { ta
   executions.set(runId, controller);
   void (async () => {
     try {
-      updateRun(runId, "running", "正在通过 Relay 规划受限命令");
+      updateRun(runId, "planning", "正在通过 Relay 规划受限命令");
       const command = await planSandboxTask(sandboxKey, input.model, input.task);
       updateRun(runId, "running", `Agent 已生成 ${command.language} 命令，正在启动隔离沙箱`);
-      const result = await runOpenSandboxCommand({ command: commandForAgent(command), image: imageForAgent(command), timeoutMs: command.timeoutMs, signal: controller.signal });
+      const result = await runOpenSandboxCommand({
+        command: commandForAgent(command),
+        image: imageForAgent(command),
+        timeoutMs: command.timeoutMs,
+        signal: controller.signal,
+        metadata: { "zmzai.run_id": runId },
+        onSandboxCreated: () => { updateRun(runId, "running", "临时沙箱已创建，正在执行受限命令"); },
+      });
       for (const line of result.stdout) updateRun(runId, "running", line);
       for (const line of result.stderr) updateRun(runId, "running", line);
       updateRun(runId, result.exitCode === 0 ? "succeeded" : "failed", result.exitCode === 0 ? "沙箱执行完成，临时环境已清理" : "沙箱命令执行失败", result.exitCode);

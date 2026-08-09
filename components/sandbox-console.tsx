@@ -8,8 +8,10 @@ type RelayModel = { model: string; maxInputTokens: number; maxOutputTokens: numb
 
 const statusLabels: Record<RunStatus, string> = {
   queued: "排队中",
+  planning: "规划中",
   running: "执行中",
-  waiting_approval: "等待审批",
+  cancellation_requested: "正在取消",
+  cleanup_pending: "等待清理",
   succeeded: "已完成",
   failed: "失败",
   cancelled: "已取消",
@@ -17,8 +19,10 @@ const statusLabels: Record<RunStatus, string> = {
 
 const statusClass: Record<RunStatus, string> = {
   queued: "status-queued",
+  planning: "status-running",
   running: "status-running",
-  waiting_approval: "status-waiting",
+  cancellation_requested: "status-waiting",
+  cleanup_pending: "status-waiting",
   succeeded: "status-succeeded",
   failed: "status-failed",
   cancelled: "status-cancelled",
@@ -44,7 +48,7 @@ export function SandboxConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const selectedRun = useMemo(() => runs.find((run) => run.id === selectedId) ?? runs[0], [runs, selectedId]);
-  const activeCount = runs.filter((run) => ["queued", "running", "waiting_approval"].includes(run.status)).length;
+  const activeCount = runs.filter((run) => ["queued", "planning", "running", "cancellation_requested", "cleanup_pending"].includes(run.status)).length;
 
   const refreshRuns = useCallback(async () => {
     const response = await fetch("/api/runs", { cache: "no-store" });
