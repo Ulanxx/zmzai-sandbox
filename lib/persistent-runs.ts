@@ -5,6 +5,7 @@ import type { SandboxRun } from "@/lib/sandbox-types";
 
 type ExecutionLease = { executionId: string; leaseExpiresAt: Date; providerSandboxId?: string };
 type StoredRun = { runId: string; userId: string; ownerSandboxKeyId?: string; payload: SandboxRun; execution?: ExecutionLease; expiresAt: Date };
+type CapacitySlot = { slot: number; executionId?: string; leaseExpiresAt?: Date };
 type Submission = { ownerSandboxKeyId: string; idempotencyKey: string; requestHash: string; runId: string; expiresAt: Date };
 
 const runSchema = new Schema<StoredRun>({ runId: { type: String, unique: true, index: true, required: true }, userId: { type: String, index: true, required: true }, ownerSandboxKeyId: { type: String, index: true }, payload: { type: Schema.Types.Mixed, required: true }, execution: { type: Schema.Types.Mixed }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
@@ -15,6 +16,8 @@ submissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const SandboxRunModel = (models.ZmzaiSandboxRun as Model<StoredRun> | undefined) ?? model<StoredRun>("ZmzaiSandboxRun", runSchema);
 const SandboxSubmissionModel = (models.ZmzaiSandboxSubmission as Model<Submission> | undefined) ?? model<Submission>("ZmzaiSandboxSubmission", submissionSchema);
+const capacitySchema = new Schema<CapacitySlot>({ slot: { type: Number, unique: true, required: true }, executionId: { type: String, index: true }, leaseExpiresAt: { type: Date, index: true } }, { strict: "throw" });
+const SandboxCapacityModel = (models.ZmzaiSandboxCapacity as Model<CapacitySlot> | undefined) ?? model<CapacitySlot>("ZmzaiSandboxCapacity", capacitySchema);
 const expiry = () => new Date(Date.now() + 60 * 60 * 1000);
 
 export async function persistRun(run: SandboxRun) {
@@ -54,12 +57,20 @@ const leaseExpiry = () => new Date(Date.now() + 90_000);
 
 export async function startExecutionLease(runId: string, ownerSandboxKeyId: string, executionId: string) {
   await connectMongo();
+  await Promise.all([0, 1, 2].map((slot) => SandboxCapacityModel.updateOne({ slot }, { $setOnInsert: { slot } }, { upsert: true })));
+  const slot = await SandboxCapacityModel.findOneAndUpdate({ executionId: { $exists: false } }, { $set: { executionId, leaseExpiresAt: leaseExpiry() } }, { sort: { slot: 1 }, new: true });
+  if (!slot) return false;
   await SandboxRunModel.updateOne({ runId, ownerSandboxKeyId }, { $set: { execution: { executionId, leaseExpiresAt: leaseExpiry() } } });
+  return true;
 }
 
 export async function heartbeatExecutionLease(runId: string, executionId: string) {
   await connectMongo();
-  await SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $set: { "execution.leaseExpiresAt": leaseExpiry() } });
+  const expiresAt = leaseExpiry();
+  await Promise.all([
+    SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $set: { "execution.leaseExpiresAt": expiresAt } }),
+    SandboxCapacityModel.updateOne({ executionId }, { $set: { leaseExpiresAt: expiresAt } }),
+  ]);
 }
 
 export async function recordProviderSandbox(runId: string, executionId: string, providerSandboxId: string) {
@@ -69,16 +80,21 @@ export async function recordProviderSandbox(runId: string, executionId: string, 
 
 export async function releaseExecutionLease(runId: string, executionId: string) {
   await connectMongo();
-  await SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $unset: { execution: 1 } });
+  await Promise.all([
+    SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $unset: { execution: 1 } }),
+    SandboxCapacityModel.updateOne({ executionId }, { $unset: { executionId: 1, leaseExpiresAt: 1 } }),
+  ]);
 }
 
-export async function recoverExpiredExecutions(cleanup: (sandboxId: string) => Promise<void>) {
+export async function recoverExpiredExecutions(cleanup: (sandboxId: string) => Promise<void>, findOrphans: (metadata: Record<string, string>) => Promise<string[]>) {
   await connectMongo();
   const docs = await SandboxRunModel.find({ "execution.leaseExpiresAt": { $lt: new Date() } }).limit(10);
   for (const doc of docs) {
     const execution = doc.execution;
     if (!execution) continue;
-    if (execution.providerSandboxId) await cleanup(execution.providerSandboxId).catch(() => undefined);
+    const sandboxIds = new Set(execution.providerSandboxId ? [execution.providerSandboxId] : []);
+    for (const sandboxId of await findOrphans({ "zmzai.run_id": doc.runId, "zmzai.execution_id": execution.executionId }).catch(() => [])) sandboxIds.add(sandboxId);
+    for (const sandboxId of sandboxIds) await cleanup(sandboxId).catch(() => undefined);
     const run = doc.payload;
     if (!["succeeded", "failed", "cancelled"].includes(run.status)) {
       const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
@@ -89,6 +105,7 @@ export async function recoverExpiredExecutions(cleanup: (sandboxId: string) => P
       run.events.push({ id: crypto.randomUUID(), sequence, at: run.finishedAt, kind: "stderr", message: run.failure.error });
     }
     await SandboxRunModel.updateOne({ _id: doc._id, "execution.executionId": execution.executionId, "execution.leaseExpiresAt": { $lt: new Date() } }, { $set: { payload: run }, $unset: { execution: 1 } });
+    await SandboxCapacityModel.updateOne({ executionId: execution.executionId }, { $unset: { executionId: 1, leaseExpiresAt: 1 } });
   }
 }
 

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { commandForAgent, imageForAgent, planSandboxTask } from "@/lib/agent-planner";
 import { resolveSandboxCaller, type SandboxCaller } from "@/lib/relay-client";
-import { deleteOpenSandbox, runOpenSandboxCommand } from "@/lib/opensandbox-provider";
+import { deleteOpenSandbox, findOpenSandboxes, runOpenSandboxCommand } from "@/lib/opensandbox-provider";
 import { createRun, updateRun } from "@/lib/sandbox-store";
 import { activeRunCount, claimSubmission, existingSubmission, heartbeatExecutionLease, persistedRun, recordProviderSandbox, recoverExpiredExecutions, releaseExecutionLease, startExecutionLease } from "@/lib/persistent-runs";
 import type { SandboxRun } from "@/lib/sandbox-types";
@@ -29,7 +29,7 @@ export function readRunInput(body: unknown) {
 export async function idempotentRun(caller: SandboxCaller, idempotencyKey: string | null, input: { task: string; model: string }) {
   if (!idempotencyKey || !/^[\x21-\x7e]{16,128}$/.test(idempotencyKey)) return { error: "Idempotency-Key 必须是 16 到 128 个可打印字符" } as const;
   const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
-  await recoverExpiredExecutions(deleteOpenSandbox).catch(() => undefined);
+  await recoverExpiredExecutions(deleteOpenSandbox, findOpenSandboxes).catch(() => undefined);
   const existing = await existingSubmission(caller.keyId, idempotencyKey);
   if (existing) {
     if (existing.requestHash !== fingerprint) return { error: "同一 Idempotency-Key 不能对应不同请求" } as const;
@@ -57,7 +57,7 @@ export function executeSandboxRun(runId: string, ownerSandboxKeyId: string, sand
   void (async () => {
     const heartbeat = setInterval(() => { void heartbeatExecutionLease(runId, executionId).catch(() => undefined); }, 20_000);
     try {
-      await startExecutionLease(runId, ownerSandboxKeyId, executionId);
+      if (!(await startExecutionLease(runId, ownerSandboxKeyId, executionId))) throw new Error("Sandbox 当前并发已满，请稍后重试");
       updateRun(runId, "planning", "正在通过 Relay 规划受限命令");
       const command = await planSandboxTask(sandboxKey, input.model, input.task);
       updateRun(runId, "running", `Agent 已生成 ${command.language} 命令，正在启动隔离沙箱`);
@@ -66,7 +66,7 @@ export function executeSandboxRun(runId: string, ownerSandboxKeyId: string, sand
         image: imageForAgent(command),
         timeoutMs: command.timeoutMs,
         signal: controller.signal,
-        metadata: { "zmzai.run_id": runId },
+        metadata: { "zmzai.run_id": runId, "zmzai.execution_id": executionId },
         onSandboxCreated: async (sandboxId) => { await recordProviderSandbox(runId, executionId, sandboxId); updateRun(runId, "running", "临时沙箱已创建，正在执行受限命令"); },
       });
       for (const line of result.stdout) updateRun(runId, "running", line);

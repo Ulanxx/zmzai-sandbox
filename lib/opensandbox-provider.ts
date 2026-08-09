@@ -71,6 +71,15 @@ export async function deleteOpenSandbox(sandboxId: string) {
   await lifecycleRequest(`/sandboxes/${encodeURIComponent(sandboxId)}`, { method: "DELETE" });
 }
 
+export async function findOpenSandboxes(metadata: Record<string, string>) {
+  const response = await lifecycleRequest("/sandboxes?page=1&pageSize=100");
+  const body = (await response.json()) as { items?: Array<{ id?: string; metadata?: Record<string, string> }> };
+  return (body.items ?? []).flatMap((sandbox) => {
+    if (!sandbox.id || !sandbox.metadata) return [];
+    return Object.entries(metadata).every(([key, value]) => sandbox.metadata?.[key] === value) ? [sandbox.id] : [];
+  });
+}
+
 function parseSseChunk(buffer: string, onEvent: (event: { type?: string; text?: string; error?: { evalue?: string } }) => void) {
   const records = buffer.split(/\n\n/);
   const remainder = records.pop() ?? "";
