@@ -67,7 +67,7 @@ async function getExecdEndpoint(sandboxId: string): Promise<Endpoint> {
   return (await response.json()) as Endpoint;
 }
 
-async function deleteSandbox(sandboxId: string) {
+export async function deleteOpenSandbox(sandboxId: string) {
   await lifecycleRequest(`/sandboxes/${encodeURIComponent(sandboxId)}`, { method: "DELETE" });
 }
 
@@ -119,7 +119,7 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
 
   const sandboxId = created.id;
   await input.onSandboxCreated?.(sandboxId);
-  const abort = () => { void deleteSandbox(sandboxId).catch(() => undefined); };
+  const abort = () => { void deleteOpenSandbox(sandboxId).catch(() => undefined); };
   input.signal?.addEventListener("abort", abort, { once: true });
   try {
     const endpoint = await getExecdEndpoint(sandboxId);
@@ -157,6 +157,6 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
     return { sandboxId, stdout, stderr, exitCode };
   } finally {
     input.signal?.removeEventListener("abort", abort);
-    await deleteSandbox(sandboxId).catch(() => undefined);
+    await deleteOpenSandbox(sandboxId).catch(() => undefined);
   }
 }

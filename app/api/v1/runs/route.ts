@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const concurrency = message.includes("运行中") || message.includes("并发");
     return NextResponse.json({ code: concurrency ? "RATE_LIMITED" : request.headers.get("idempotency-key") ? "IDEMPOTENCY_CONFLICT" : "INVALID_IDEMPOTENCY_KEY", error: message }, { status: concurrency ? 429 : request.headers.get("idempotency-key") ? 409 : 400, headers: concurrency ? { "Retry-After": "15" } : undefined });
   }
-  if (!result.replayed) executeSandboxRun(result.run.id, request.headers.get("authorization")!.slice(7).trim(), input);
+  if (!result.replayed) executeSandboxRun(result.run.id, caller.keyId, request.headers.get("authorization")!.slice(7).trim(), input);
   return NextResponse.json({ run: result.run }, { status: 201, headers: { "Cache-Control": "no-store" } });
 }
 

@@ -3,10 +3,11 @@ import { model, models, Schema, type Model } from "mongoose";
 import { connectMongo } from "@/lib/mongo";
 import type { SandboxRun } from "@/lib/sandbox-types";
 
-type StoredRun = { runId: string; userId: string; ownerSandboxKeyId?: string; payload: SandboxRun; expiresAt: Date };
+type ExecutionLease = { executionId: string; leaseExpiresAt: Date; providerSandboxId?: string };
+type StoredRun = { runId: string; userId: string; ownerSandboxKeyId?: string; payload: SandboxRun; execution?: ExecutionLease; expiresAt: Date };
 type Submission = { ownerSandboxKeyId: string; idempotencyKey: string; requestHash: string; runId: string; expiresAt: Date };
 
-const runSchema = new Schema<StoredRun>({ runId: { type: String, unique: true, index: true, required: true }, userId: { type: String, index: true, required: true }, ownerSandboxKeyId: { type: String, index: true }, payload: { type: Schema.Types.Mixed, required: true }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
+const runSchema = new Schema<StoredRun>({ runId: { type: String, unique: true, index: true, required: true }, userId: { type: String, index: true, required: true }, ownerSandboxKeyId: { type: String, index: true }, payload: { type: Schema.Types.Mixed, required: true }, execution: { type: Schema.Types.Mixed }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
 runSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 const submissionSchema = new Schema<Submission>({ ownerSandboxKeyId: { type: String, required: true }, idempotencyKey: { type: String, required: true }, requestHash: { type: String, required: true }, runId: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
 submissionSchema.index({ ownerSandboxKeyId: 1, idempotencyKey: 1 }, { unique: true });
@@ -47,6 +48,48 @@ export async function requestPersistedCancellation(runId: string, ownerSandboxKe
     await doc.save();
   }
   return run;
+}
+
+const leaseExpiry = () => new Date(Date.now() + 90_000);
+
+export async function startExecutionLease(runId: string, ownerSandboxKeyId: string, executionId: string) {
+  await connectMongo();
+  await SandboxRunModel.updateOne({ runId, ownerSandboxKeyId }, { $set: { execution: { executionId, leaseExpiresAt: leaseExpiry() } } });
+}
+
+export async function heartbeatExecutionLease(runId: string, executionId: string) {
+  await connectMongo();
+  await SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $set: { "execution.leaseExpiresAt": leaseExpiry() } });
+}
+
+export async function recordProviderSandbox(runId: string, executionId: string, providerSandboxId: string) {
+  await connectMongo();
+  await SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $set: { "execution.providerSandboxId": providerSandboxId, "execution.leaseExpiresAt": leaseExpiry() } });
+}
+
+export async function releaseExecutionLease(runId: string, executionId: string) {
+  await connectMongo();
+  await SandboxRunModel.updateOne({ runId, "execution.executionId": executionId }, { $unset: { execution: 1 } });
+}
+
+export async function recoverExpiredExecutions(cleanup: (sandboxId: string) => Promise<void>) {
+  await connectMongo();
+  const docs = await SandboxRunModel.find({ "execution.leaseExpiresAt": { $lt: new Date() } }).limit(10);
+  for (const doc of docs) {
+    const execution = doc.execution;
+    if (!execution) continue;
+    if (execution.providerSandboxId) await cleanup(execution.providerSandboxId).catch(() => undefined);
+    const run = doc.payload;
+    if (!["succeeded", "failed", "cancelled"].includes(run.status)) {
+      const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
+      run.status = "failed";
+      run.finishedAt = new Date().toISOString();
+      run.exitCode = 1;
+      run.failure = { code: "EXECUTION_LEASE_EXPIRED", error: "执行进程已失联，临时沙箱已回收", retryable: true };
+      run.events.push({ id: crypto.randomUUID(), sequence, at: run.finishedAt, kind: "stderr", message: run.failure.error });
+    }
+    await SandboxRunModel.updateOne({ _id: doc._id, "execution.executionId": execution.executionId, "execution.leaseExpiresAt": { $lt: new Date() } }, { $set: { payload: run }, $unset: { execution: 1 } });
+  }
 }
 
 export async function activeRunCount(ownerSandboxKeyId?: string) {
