@@ -1,4 +1,4 @@
-import type { CreateRunInput, RunEvent, RunStatus, SandboxRun } from "./sandbox-types";
+import type { CreateAgentRunInput, CreateRunInput, RunEvent, RunEventKind, RunStatus, SandboxRun } from "./sandbox-types";
 import { persistRun } from "./persistent-runs";
 
 type Store = Map<string, SandboxRun>;
@@ -11,11 +11,11 @@ function now() {
   return new Date().toISOString();
 }
 
-function event(sequence: number, kind: RunEvent["kind"], message: string): RunEvent {
+function event(sequence: number, kind: RunEventKind, message: string): RunEvent {
   return { id: crypto.randomUUID(), sequence, at: now(), kind, message };
 }
 
-function addEvent(run: SandboxRun, kind: RunEvent["kind"], message: string) {
+function addEvent(run: SandboxRun, kind: RunEventKind, message: string) {
   const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
   run.events.push(event(sequence, kind, message));
 }
@@ -34,7 +34,7 @@ export function getRunForSandboxKey(runId: string, sandboxKeyId: string) {
   return run?.ownerSandboxKeyId === sandboxKeyId ? run : undefined;
 }
 
-export function createRun(input: CreateRunInput, id = `run_${crypto.randomUUID().slice(0, 8)}`) {
+export function createRun(input: CreateRunInput & Partial<Pick<CreateAgentRunInput, "taskRunId" | "requestId" | "snapshot" | "command" | "limits">>, id = `run_${crypto.randomUUID().slice(0, 8)}`) {
   const run: SandboxRun = {
     id,
     userId: input.userId,
@@ -46,6 +46,7 @@ export function createRun(input: CreateRunInput, id = `run_${crypto.randomUUID()
     provider: process.env.OPEN_SANDBOX_URL ? "opensandbox" : "demo",
     events: [event(1, "system", "任务已进入沙箱队列")],
     artifacts: [],
+    ...(input.taskRunId ? { taskRunId: input.taskRunId, requestId: input.requestId, snapshot: input.snapshot, command: input.command, limits: input.limits } : {}),
   };
   runs.set(run.id, run);
   void persistRun(run).catch((error) => console.error("persist sandbox run", error));

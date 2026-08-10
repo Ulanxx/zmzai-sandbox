@@ -25,7 +25,9 @@
 
 ## 当前边界
 
-当前实现是控制台验证闭环，不是稳定的第三方 SDK：运行记录保存在进程内存中，提交接口使用登录 Cookie，单次运行只支持一个 `run_code` 工具调用。Workspace 快照、文件产物、多工具循环和服务间签发的 Agent Token 仍在设计中，见 [稳定 Runner API 设计](docs/superpowers/specs/agent-runner-api-design.md)。
+当前实现是控制台验证闭环，不是稳定的第三方 SDK：消费者运行记录保存在进程内存中（Mongo 镜像 1 小时 TTL），提交接口使用登录 Cookie，单次运行只支持一个 `run_code` 工具调用。
+
+面向 `a.zmzai.cloud` 的内部 Agent API 已实现：`POST/GET /api/internal/agent/runs`、`GET .../events`、`POST .../cancel`，使用 `SANDBOX_AGENT_SERVICE_SECRET_*` 服务密钥认证，接收 Workspace 影子快照 + 结构化命令 + 资源限额，执行时跳过 LLM 规划，事件以 `sandbox.*` 类型持久化到 Mongo（Agent 运行 TTL 7 天，重启可对账）。文件产物、多工具循环和服务间签发的短期 Agent Token 仍在设计中，见 [稳定 Runner API 设计](docs/superpowers/specs/agent-runner-api-design.md)。
 
 开发者预览现已支持创建只授权 Sandbox Runner 的 `sandbox_key`（`zsk_...`）并通过 `POST /api/v1/runs` 调用。密钥明文只会在创建时展示一次，模型调用、额度和结算仍由 Relay 统一负责。服务端接入和完整请求示例位于 [开发者工作台](https://z.zmzai.cloud/developers)。
 

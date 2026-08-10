@@ -1,5 +1,6 @@
 const DEFAULT_EXECD_PORT = 44772;
 const MAX_OUTPUT_BYTES = 256 * 1024;
+const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 
 export type OpenSandboxCommand = {
   command: string;
@@ -14,6 +15,26 @@ export type OpenSandboxCommand = {
 
 export type OpenSandboxCommandResult = {
   sandboxId: string;
+  stdout: string[];
+  stderr: string[];
+  exitCode: number;
+};
+
+export type AgentSandboxCommand = {
+  files: Array<{ path: string; content: string }>;
+  program: string;
+  args: string[];
+  cwd?: string;
+  envs?: Record<string, string>;
+  timeoutMs?: number;
+  cpuMillis?: number;
+  memoryMiB?: number;
+  image?: string;
+  signal?: AbortSignal;
+  onLine?: (kind: "stdout" | "stderr", text: string) => void;
+};
+
+export type AgentSandboxCommandResult = {
   stdout: string[];
   stderr: string[];
   exitCode: number;
@@ -164,6 +185,111 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
     }
     if (outputBytes > MAX_OUTPUT_BYTES) { stderr.push("输出超过 256 KiB 限制，已截断"); exitCode = 1; }
     return { sandboxId, stdout, stderr, exitCode };
+  } finally {
+    input.signal?.removeEventListener("abort", abort);
+    await deleteOpenSandbox(sandboxId).catch(() => undefined);
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function relativeDir(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index <= 0 ? "" : path.slice(0, index);
+}
+
+async function execdCommand(endpoint: Endpoint, body: Record<string, unknown>, signal?: AbortSignal) {
+  const response = await fetch(`${endpointUrl(endpoint.endpoint)}/command`, {
+    method: "POST",
+    headers: { Accept: "text/event-stream", "Content-Type": "application/json", ...(endpoint.headers ?? {}) },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error(`OpenSandbox Execd ${response.status}: ${await readError(response)}`);
+  return response;
+}
+
+async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "stderr", text: string) => void): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  let outputBytes = 0;
+  let exitCode = 0;
+  let buffer = "";
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("OpenSandbox Execd 没有返回 SSE body");
+  const decoder = new TextDecoder();
+  const push = (kind: "stdout" | "stderr", text: string) => {
+    outputBytes += Buffer.byteLength(text);
+    if (outputBytes <= MAX_OUTPUT_BYTES) {
+      if (kind === "stdout") stdout.push(text);
+      else stderr.push(text);
+    }
+    onLine(kind, text);
+  };
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    buffer = parseSseChunk(buffer, (event) => {
+      if (event.type === "stdout" && event.text) push("stdout", event.text);
+      if (event.type === "stderr" && event.text) push("stderr", event.text);
+      if (event.type === "error") {
+        push("stderr", event.error?.evalue || event.text || "OpenSandbox 执行失败");
+        exitCode = 1;
+      }
+    });
+  }
+  if (outputBytes > MAX_OUTPUT_BYTES) { push("stderr", "输出超过 256 KiB 限制，已截断"); exitCode = 1; }
+  return { stdout, stderr, exitCode };
+}
+
+/**
+ * Creates an isolated sandbox, writes the caller-provided snapshot files into
+ * the workdir (via the verified Execd `/command` API using base64 — no host
+ * filesystem access), then runs `program args`. stdout/stderr lines are pushed
+ * to `onLine` as they arrive so the agent can stream them into the run store.
+ */
+export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promise<AgentSandboxCommandResult> {
+  const snapshotBytes = input.files.reduce((sum, file) => sum + Buffer.byteLength(file.content, "utf8"), 0);
+  if (snapshotBytes > MAX_SNAPSHOT_BYTES) {
+    throw new Error("快照总大小超过 1 MiB 限制");
+  }
+  const config = getConfig();
+  const createResponse = await lifecycleRequest("/sandboxes", {
+    method: "POST",
+    body: JSON.stringify({
+      image: { uri: input.image || process.env.OPEN_SANDBOX_IMAGE?.trim() || "node:22-alpine" },
+      timeout: Math.max(60, Math.ceil((input.timeoutMs ?? 60000) / 1000) + 30),
+      resourceLimits: {
+        cpu: input.cpuMillis ? `${input.cpuMillis}m` : process.env.OPEN_SANDBOX_CPU_LIMIT?.trim() || "500m",
+        memory: input.memoryMiB ? `${input.memoryMiB}Mi` : process.env.OPEN_SANDBOX_MEMORY_LIMIT?.trim() || "512Mi",
+      },
+      entrypoint: ["tail", "-f", "/dev/null"],
+      networkPolicy: { defaultAction: "deny" },
+      metadata: { "zmzai.managed": "true", "zmzai.agent": "true" },
+    }),
+  });
+  const created = (await createResponse.json()) as { id?: string };
+  if (!created.id) throw new Error("OpenSandbox 创建响应缺少 sandbox id");
+  const sandboxId = created.id;
+  const abort = () => { void deleteOpenSandbox(sandboxId).catch(() => undefined); };
+  input.signal?.addEventListener("abort", abort, { once: true });
+
+  try {
+    const endpoint = await getExecdEndpoint(sandboxId);
+    for (const file of input.files) {
+      const dir = relativeDir(file.path);
+      const base64 = Buffer.from(file.content).toString("base64");
+      const write = `${dir ? `mkdir -p ${shellQuote(dir)} && ` : ""}printf '%s' '${base64}' | base64 -d > ${shellQuote(file.path)}`;
+      const writeResponse = await execdCommand(endpoint, { command: write, timeout: 30_000, background: false }, input.signal);
+      await streamExecdOutput(writeResponse, () => undefined);
+    }
+    const command = [input.program, ...input.args].map(shellQuote).join(" ");
+    const runResponse = await execdCommand(endpoint, { command, ...(input.cwd ? { cwd: input.cwd } : {}), timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }, input.signal);
+    return await streamExecdOutput(runResponse, input.onLine ?? (() => undefined));
   } finally {
     input.signal?.removeEventListener("abort", abort);
     await deleteOpenSandbox(sandboxId).catch(() => undefined);

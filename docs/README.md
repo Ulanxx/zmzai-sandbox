@@ -17,6 +17,10 @@ ZMZAI Sandbox 是 Agent 的代码执行层。调用方提交任务，Runner 负�
 
 - [自建 OpenSandbox](how-to/self-host-opensandbox.md)：香港服务器上的私有控制面、Caddy 和运行时配置。
 
+### 我要选执行基座
+
+- [沙箱后端选型](help/sandbox-backend-options.md)：OpenSandbox、Cloudflare Sandbox、E2B BYOC、Modal 和 Daytona 的取舍。
+
 ### 我要查接口和配置
 
 - [HTTP 与 SSE API](reference/http-api.md)

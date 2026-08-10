@@ -14,6 +14,9 @@
 | `OPEN_SANDBOX_IMAGE` | `node:22-alpine` | JavaScript 和 shell 运行镜像 |
 | `OPEN_SANDBOX_CPU_LIMIT` | `500m` | 每个临时沙箱的 CPU 限制 |
 | `OPEN_SANDBOX_MEMORY_LIMIT` | `512Mi` | 每个临时沙箱的内存限制 |
+| `SANDBOX_AGENT_SERVICE_SECRET_CURRENT` | 无 | a.zmzai.cloud 调用内部 Agent API 的服务密钥；生产必须配置 |
+| `SANDBOX_AGENT_SERVICE_SECRET_PREVIOUS` | 空 | 轮换期间的旧服务密钥 |
+| `SANDBOX_AGENT_ALLOWED_PROGRAMS` | 内置白名单 | exec 工具允许的程序白名单（逗号分隔，覆盖默认列表） |
 
 ## 安全要求
 

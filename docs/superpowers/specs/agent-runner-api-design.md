@@ -1,6 +1,8 @@
 # ZMZAI Agent Runner API 设计草案
 
-> 状态：设计中。当前线上 `/api/runs` 仍是控制台型 Cookie API，不要把本文当作已发布协议。
+> 状态：已实现（内部 Agent API）。`a.zmzai.cloud` 的 `exec` 工具通过本文描述的服务间接口执行；消费者侧 `/api/runs` 仍保留为控制台型 Cookie API。
+>
+> 实际落地的是 `docs/reference/sandbox-agent-internal-api.md` 冻结的契约：`POST /api/internal/agent/runs`（Bearer 服务密钥 + 快照 + 结构化命令 + 限额）、`GET .../runs/:runId`、`GET .../events`（`sandbox.*` 事件，Mongo 重放）、`POST .../cancel`（幂等）。`requestId` 幂等键为 `(taskRunId, requestId)`。
 
 ## 目标
 

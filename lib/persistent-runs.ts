@@ -7,22 +7,31 @@ type ExecutionLease = { executionId: string; leaseExpiresAt: Date; providerSandb
 type StoredRun = { runId: string; userId: string; ownerSandboxKeyId?: string; payload: SandboxRun; execution?: ExecutionLease; expiresAt: Date };
 type CapacitySlot = { slot: number; executionId?: string; leaseExpiresAt?: Date };
 type Submission = { ownerSandboxKeyId: string; idempotencyKey: string; requestHash: string; runId: string; expiresAt: Date };
+type AgentSubmission = { taskRunId: string; requestId: string; requestHash: string; runId: string; expiresAt: Date };
 
 const runSchema = new Schema<StoredRun>({ runId: { type: String, unique: true, index: true, required: true }, userId: { type: String, index: true, required: true }, ownerSandboxKeyId: { type: String, index: true }, payload: { type: Schema.Types.Mixed, required: true }, execution: { type: Schema.Types.Mixed }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
 runSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 const submissionSchema = new Schema<Submission>({ ownerSandboxKeyId: { type: String, required: true }, idempotencyKey: { type: String, required: true }, requestHash: { type: String, required: true }, runId: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
 submissionSchema.index({ ownerSandboxKeyId: 1, idempotencyKey: 1 }, { unique: true });
 submissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+const agentSubmissionSchema = new Schema<AgentSubmission>({ taskRunId: { type: String, required: true }, requestId: { type: String, required: true }, requestHash: { type: String, required: true }, runId: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { strict: "throw", timestamps: true });
+agentSubmissionSchema.index({ taskRunId: 1, requestId: 1 }, { unique: true });
+agentSubmissionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const SandboxRunModel = (models.ZmzaiSandboxRun as Model<StoredRun> | undefined) ?? model<StoredRun>("ZmzaiSandboxRun", runSchema);
 const SandboxSubmissionModel = (models.ZmzaiSandboxSubmission as Model<Submission> | undefined) ?? model<Submission>("ZmzaiSandboxSubmission", submissionSchema);
 const capacitySchema = new Schema<CapacitySlot>({ slot: { type: Number, unique: true, required: true }, executionId: { type: String, index: true }, leaseExpiresAt: { type: Date, index: true } }, { strict: "throw" });
 const SandboxCapacityModel = (models.ZmzaiSandboxCapacity as Model<CapacitySlot> | undefined) ?? model<CapacitySlot>("ZmzaiSandboxCapacity", capacitySchema);
-const expiry = () => new Date(Date.now() + 60 * 60 * 1000);
+const AgentSandboxSubmissionModel = (models.ZmzaiSandboxAgentSubmission as Model<AgentSubmission> | undefined) ?? model<AgentSubmission>("ZmzaiSandboxAgentSubmission", agentSubmissionSchema);
+const consumerTtlMs = 60 * 60 * 1000;
+// Agent runs must survive long enough for the Agent to reconcile after a
+// service restart; 7 days is the retention window.
+const agentTtlMs = 7 * 24 * 60 * 60 * 1000;
 
 export async function persistRun(run: SandboxRun) {
   await connectMongo();
-  await SandboxRunModel.updateOne({ runId: run.id }, { $set: { userId: run.userId, ownerSandboxKeyId: run.ownerSandboxKeyId, payload: run, expiresAt: expiry() } }, { upsert: true });
+  const ttlMs = run.taskRunId ? agentTtlMs : consumerTtlMs;
+  await SandboxRunModel.updateOne({ runId: run.id }, { $set: { userId: run.userId, ownerSandboxKeyId: run.ownerSandboxKeyId, payload: run, expiresAt: new Date(Date.now() + ttlMs) } }, { upsert: true });
 }
 
 export async function persistedRun(runId: string, ownerSandboxKeyId?: string) {
@@ -114,6 +123,11 @@ export async function activeRunCount(ownerSandboxKeyId?: string) {
   return SandboxRunModel.countDocuments({ ...(ownerSandboxKeyId ? { ownerSandboxKeyId } : {}), "payload.status": { $in: ["queued", "running", "waiting_approval"] } });
 }
 
+export async function activeAgentRunCount(userId?: string) {
+  await connectMongo();
+  return SandboxRunModel.countDocuments({ ...(userId ? { userId } : {}), "payload.taskRunId": { $exists: true }, "payload.status": { $in: ["queued", "running", "waiting_approval"] } });
+}
+
 export async function claimSubmission(ownerSandboxKeyId: string, idempotencyKey: string, requestHash: string, runId: string) {
   await connectMongo();
   try {
@@ -131,3 +145,22 @@ export async function existingSubmission(ownerSandboxKeyId: string, idempotencyK
   await connectMongo();
   return SandboxSubmissionModel.findOne({ ownerSandboxKeyId, idempotencyKey }).lean();
 }
+
+export async function claimAgentSubmission(taskRunId: string, requestId: string, requestHash: string, runId: string) {
+  await connectMongo();
+  try {
+    const record = await AgentSandboxSubmissionModel.create({ taskRunId, requestId, requestHash, runId, expiresAt: new Date(Date.now() + agentTtlMs) });
+    return { created: true as const, runId: record.runId };
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("duplicate key")) throw error;
+    const current = await AgentSandboxSubmissionModel.findOne({ taskRunId, requestId }).lean();
+    if (!current) throw error;
+    return current.requestHash === requestHash ? { created: false as const, runId: current.runId } : { conflict: true as const };
+  }
+}
+
+export async function existingAgentSubmission(taskRunId: string, requestId: string) {
+  await connectMongo();
+  return AgentSandboxSubmissionModel.findOne({ taskRunId, requestId }).lean();
+}
+
