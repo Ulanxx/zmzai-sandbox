@@ -8,12 +8,30 @@ export type RunEvent = {
   at: string;
   kind: RunEventKind;
   message: string;
+  /** Optional structured payload (e.g. sandbox.completed -> deliverables manifest). */
+  data?: unknown;
 };
 
 export type SandboxSnapshotFile = { path: string; content: string };
 export type SandboxSnapshot = { revisionId: string | null; files: SandboxSnapshotFile[] };
 export type SandboxCommand = { program: string; args: string[]; cwd?: string; envs?: Record<string, string> };
 export type SandboxLimits = { timeoutMs?: number; cpuMillis?: number; memoryMiB?: number };
+
+/** Metadata of a deliverable produced inside the sandbox workdir. */
+export type SandboxArtifactMeta = {
+  path: string;
+  bytes: number;
+  contentType: string;
+  sha256: string;
+  tooLarge: boolean;
+};
+
+/** Full artifact data returned by the provider before the sandbox is deleted. */
+export type SandboxArtifactData = SandboxArtifactMeta & { content: Buffer };
+
+export const maxArtifactFileBytes = 20 * 1024 * 1024;
+export const maxArtifactCount = 50;
+export const maxArtifactTotalBytes = 100 * 1024 * 1024;
 
 export type SandboxRun = {
   id: string;
@@ -36,6 +54,9 @@ export type SandboxRun = {
   snapshot?: SandboxSnapshot;
   command?: SandboxCommand;
   limits?: SandboxLimits;
+  /** Deliverables manifest produced by the run (metadata only; bytes are cached
+   *  separately in the in-memory artifact store, never persisted to Mongo). */
+  deliverables?: SandboxArtifactMeta[];
 };
 
 export type CreateRunInput = {

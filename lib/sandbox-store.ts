@@ -1,4 +1,4 @@
-import type { CreateAgentRunInput, CreateRunInput, RunEvent, RunEventKind, RunStatus, SandboxRun } from "./sandbox-types";
+import type { CreateAgentRunInput, CreateRunInput, RunEvent, RunEventKind, RunStatus, SandboxArtifactMeta, SandboxRun } from "./sandbox-types";
 import { persistRun } from "./persistent-runs";
 
 type Store = Map<string, SandboxRun>;
@@ -71,10 +71,20 @@ export function updateRun(runId: string, status: RunStatus, message?: string, ex
   return run;
 }
 
-export function appendRunEvent(runId: string, kind: RunEvent["kind"], message: string) {
+export function appendRunEvent(runId: string, kind: RunEvent["kind"], message: string, data?: unknown) {
   const run = runs.get(runId);
   if (!run) return undefined;
   addEvent(run, kind, message);
+  if (data !== undefined) run.events.at(-1)!.data = data;
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
+  return run;
+}
+
+/** Records the deliverables manifest on the run (metadata only). */
+export function setRunDeliverables(runId: string, deliverables: SandboxArtifactMeta[]) {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+  run.deliverables = deliverables;
   void persistRun(run).catch((error) => console.error("persist sandbox run", error));
   return run;
 }

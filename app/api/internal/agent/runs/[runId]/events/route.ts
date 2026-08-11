@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 const terminalStates = new Set(["succeeded", "failed", "cancelled"]);
 
 function encodeEvent(sequence: number, event: RunEvent, runId: string): Uint8Array {
-  return new TextEncoder().encode(`id: ${sequence}\nevent: ${event.kind}\ndata: ${JSON.stringify({ id: event.id, runId, sequence, type: event.kind, at: event.at, data: { text: event.message } })}\n\n`);
+  const payload = event.data !== undefined && event.data !== null && typeof event.data === "object"
+    ? { text: event.message, ...event.data as Record<string, unknown> }
+    : { text: event.message };
+  return new TextEncoder().encode(`id: ${sequence}\nevent: ${event.kind}\ndata: ${JSON.stringify({ id: event.id, runId, sequence, type: event.kind, at: event.at, data: payload })}\n\n`);
 }
 
 async function resolveRun(runId: string) {

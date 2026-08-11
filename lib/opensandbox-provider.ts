@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+import { maxArtifactCount, maxArtifactFileBytes, maxArtifactTotalBytes, type SandboxArtifactData } from "@/lib/sandbox-types";
+
 const DEFAULT_EXECD_PORT = 44772;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
@@ -32,12 +36,16 @@ export type AgentSandboxCommand = {
   image?: string;
   signal?: AbortSignal;
   onLine?: (kind: "stdout" | "stderr", text: string) => void;
+  /** Collect files new or changed vs the input snapshot into `artifacts`. */
+  collectArtifacts?: boolean;
+  inputFiles?: Array<{ path: string; content: string }>;
 };
 
 export type AgentSandboxCommandResult = {
   stdout: string[];
   stderr: string[];
   exitCode: number;
+  artifacts: SandboxArtifactData[];
 };
 
 type Endpoint = { endpoint: string; headers?: Record<string, string> };
@@ -212,7 +220,7 @@ async function execdCommand(endpoint: Endpoint, body: Record<string, unknown>, s
   return response;
 }
 
-async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "stderr", text: string) => void): Promise<{ stdout: string[]; stderr: string[]; exitCode: number }> {
+async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "stderr", text: string) => void): Promise<{ stdout: string[]; stderr: string[]; exitCode: number; artifacts?: SandboxArtifactData[] }> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   let outputBytes = 0;
@@ -246,11 +254,132 @@ async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "
   return { stdout, stderr, exitCode };
 }
 
+/** Captures raw stdout text from an Execd SSE stream up to `maxBytes`. */
+async function captureStdout(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean; exitCode: number }> {
+  let text = "";
+  let truncated = false;
+  let exitCode = 0;
+  let buffer = "";
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("OpenSandbox Execd 没有返回 SSE body");
+  const decoder = new TextDecoder();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    buffer = parseSseChunk(buffer, (event) => {
+      if (event.type === "stdout" && event.text) {
+        const remaining = maxBytes - Buffer.byteLength(text, "utf8");
+        if (remaining > 0) text += event.text.slice(0, Math.max(0, remaining));
+        else truncated = true;
+      }
+      if (event.type === "error") {
+        exitCode = 1;
+      }
+    });
+  }
+  return { text, truncated, exitCode };
+}
+
+const contentTypeByExt: Record<string, string> = {
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  json: "application/json",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  html: "text/html",
+  zip: "application/zip",
+  tar: "application/x-tar",
+  gz: "application/gzip",
+};
+
+function contentTypeFor(path: string): string {
+  const extension = path.includes(".") ? path.split(".").pop()?.toLowerCase() ?? "" : "";
+  return contentTypeByExt[extension] ?? "application/octet-stream";
+}
+
+function sha256Hex(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Lists the sandbox workdir and reads back files that are new or changed
+ * relative to the input snapshot. Over-limit files are marked `tooLarge` and
+ * skipped. Runs before the temp sandbox is deleted.
+ */
+async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCommand, signal?: AbortSignal): Promise<SandboxArtifactData[]> {
+  const listResponse = await execdCommand(endpoint, { command: "find . -type f -printf '%s\\t%p\\n' 2>/dev/null || find . -type f", timeout: 30_000, background: false }, signal);
+  const listing = await captureStdout(listResponse, 1024 * 1024);
+  const rows = listing.text.split("\n").map((line) => line.trimEnd()).filter(Boolean);
+  const files: Array<{ path: string; bytes: number }> = [];
+  for (const row of rows) {
+    const tab = row.indexOf("\t");
+    if (tab > 0) {
+      const bytes = Number.parseInt(row.slice(0, tab), 10);
+      const path = row.slice(tab + 1).replace(/^\.\//, "");
+      if (Number.isFinite(bytes)) files.push({ path, bytes });
+      else files.push({ path, bytes: 0 });
+    } else {
+      files.push({ path: row.replace(/^\.\//, ""), bytes: 0 });
+    }
+  }
+
+  const inputHashes = new Map<string, string>((input.inputFiles ?? []).map((file) => [file.path, sha256Hex(Buffer.from(file.content, "utf8"))]));
+  const inputPaths = new Set((input.inputFiles ?? []).map((file) => file.path));
+  const artifacts: SandboxArtifactData[] = [];
+  let totalBytes = 0;
+
+  for (const { path, bytes } of files) {
+    if (!path || path.includes("\0") || path.split("/").includes("..") || path.startsWith("/")) continue;
+    if (artifacts.length >= maxArtifactCount || totalBytes >= maxArtifactTotalBytes) {
+      artifacts.push({ path, bytes, contentType: contentTypeFor(path), sha256: "", tooLarge: true, content: Buffer.alloc(0) });
+      continue;
+    }
+    if (bytes > maxArtifactFileBytes) {
+      artifacts.push({ path, bytes, contentType: contentTypeFor(path), sha256: "", tooLarge: true, content: Buffer.alloc(0) });
+      continue;
+    }
+    const readResponse = await execdCommand(endpoint, { command: `base64 -w0 ${shellQuote(path)} 2>/dev/null`, timeout: 30_000, background: false }, signal);
+    const read = await captureStdout(readResponse, maxArtifactFileBytes * 2 + 1024);
+    if (read.exitCode !== 0) continue; // unreadable entry (directory, broken link)
+    let content: Buffer;
+    try {
+      content = Buffer.from(read.text, "base64");
+    } catch {
+      continue;
+    }
+    if (read.truncated || content.length > maxArtifactFileBytes) {
+      artifacts.push({ path, bytes: content.length || bytes, contentType: contentTypeFor(path), sha256: "", tooLarge: true, content: Buffer.alloc(0) });
+      continue;
+    }
+    // Skip files unchanged relative to the input snapshot.
+    const hash = sha256Hex(content);
+    if (inputPaths.has(path) && inputHashes.get(path) === hash) continue;
+    totalBytes += content.length;
+    if (totalBytes > maxArtifactTotalBytes) {
+      artifacts.push({ path, bytes: content.length, contentType: contentTypeFor(path), sha256: "", tooLarge: true, content: Buffer.alloc(0) });
+      break;
+    }
+    artifacts.push({ path, bytes: content.length, contentType: contentTypeFor(path), sha256: hash, tooLarge: false, content });
+  }
+  return artifacts;
+}
+
 /**
  * Creates an isolated sandbox, writes the caller-provided snapshot files into
  * the workdir (via the verified Execd `/command` API using base64 — no host
  * filesystem access), then runs `program args`. stdout/stderr lines are pushed
  * to `onLine` as they arrive so the agent can stream them into the run store.
+ * With `collectArtifacts` enabled, files new or changed vs the snapshot are
+ * read back before the sandbox is deleted.
  */
 export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promise<AgentSandboxCommandResult> {
   const snapshotBytes = input.files.reduce((sum, file) => sum + Buffer.byteLength(file.content, "utf8"), 0);
@@ -289,7 +418,17 @@ export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promis
     }
     const command = [input.program, ...input.args].map(shellQuote).join(" ");
     const runResponse = await execdCommand(endpoint, { command, ...(input.cwd ? { cwd: input.cwd } : {}), timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }, input.signal);
-    return await streamExecdOutput(runResponse, input.onLine ?? (() => undefined));
+    const result = await streamExecdOutput(runResponse, input.onLine ?? (() => undefined));
+    if (input.collectArtifacts && result.exitCode === 0) {
+      try {
+        result.artifacts = await collectSandboxArtifacts(endpoint, input, input.signal);
+      } catch {
+        result.artifacts = [];
+      }
+    } else {
+      result.artifacts = [];
+    }
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, artifacts: result.artifacts ?? [] };
   } finally {
     input.signal?.removeEventListener("abort", abort);
     await deleteOpenSandbox(sandboxId).catch(() => undefined);

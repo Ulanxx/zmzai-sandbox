@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
+
+import { setRunArtifacts } from "@/lib/artifact-store";
 import { runAgentSandboxCommand } from "@/lib/opensandbox-provider";
-import { appendRunEvent, createRun, getRun, updateRun } from "@/lib/sandbox-store";
-import type { CreateAgentRunInput } from "@/lib/sandbox-types";
+import { appendRunEvent, createRun, getRun, setRunDeliverables, updateRun } from "@/lib/sandbox-store";
+import type { CreateAgentRunInput, SandboxArtifactData } from "@/lib/sandbox-types";
 
 const globalExecutions = globalThis as typeof globalThis & { __zmzaiAgentSandboxExecutions?: Map<string, AbortController> };
 const executions = globalExecutions.__zmzaiAgentSandboxExecutions ?? new Map<string, AbortController>();
@@ -22,9 +25,18 @@ export function createAgentRunRecord(input: CreateAgentRunInput, id: string) {
   );
 }
 
+/** Records collected artifacts: manifest on the run + bytes in the cache. */
+function recordDeliverables(runId: string, artifacts: SandboxArtifactData[]): void {
+  if (!artifacts.length) return;
+  setRunArtifacts(runId, artifacts);
+  setRunDeliverables(runId, artifacts.map(({ content: _content, ...meta }) => meta));
+}
+
 /**
  * Executes an internal agent run: creates the sandbox, writes the snapshot,
  * runs the command, and streams `sandbox.*` events into the run store.
+ * On success, deliverables (files new or changed vs the snapshot) are read
+ * back and made available via the internal artifacts endpoints.
  * With no OPEN_SANDBOX_URL configured the provider is "demo" and the run is
  * simulated so the agent integration can be developed end-to-end locally.
  */
@@ -44,7 +56,23 @@ export async function executeAgentRun(runId: string): Promise<void> {
       const summary = input.snapshot.files.slice(0, 5).map((file) => file.path).join("、");
       appendRunEvent(runId, "sandbox.output", `快照文件：${summary}${input.snapshot.files.length > 5 ? ` 等 ${input.snapshot.files.length} 个` : ""}`);
       appendRunEvent(runId, "sandbox.output", `模拟执行：${input.command.program} ${input.command.args.join(" ")}`);
-      appendRunEvent(runId, "sandbox.completed", "Demo Sandbox 执行完成（未连接 OpenSandbox，未真实运行）");
+      // Demo deliverable so the full pull -> GridFS -> download chain works offline.
+      const demoText = [
+        `demo artifact for run ${runId}`,
+        `command: ${input.command.program} ${input.command.args.join(" ")}`,
+        `snapshot files: ${input.snapshot.files.length}`,
+      ].join("\n");
+      const demoArtifact: SandboxArtifactData = {
+        path: "demo-output.txt",
+        bytes: Buffer.byteLength(demoText, "utf8"),
+        contentType: "text/plain",
+        sha256: createHash("sha256").update(demoText).digest("hex"),
+        tooLarge: false,
+        content: Buffer.from(demoText, "utf8"),
+      };
+      recordDeliverables(runId, [demoArtifact]);
+      const manifest = [{ path: demoArtifact.path, bytes: demoArtifact.bytes, contentType: demoArtifact.contentType, sha256: demoArtifact.sha256, tooLarge: false }];
+      appendRunEvent(runId, "sandbox.completed", "Demo Sandbox 执行完成（未连接 OpenSandbox，未真实运行）", { artifacts: manifest });
       updateRun(runId, "succeeded", "Demo Sandbox 执行完成", 0);
       return;
     }
@@ -64,9 +92,13 @@ export async function executeAgentRun(runId: string): Promise<void> {
       memoryMiB: limits.memoryMiB,
       signal: executions.get(runId)?.signal,
       onLine: (kind, text) => appendRunEvent(runId, "sandbox.output", text),
+      collectArtifacts: true,
+      inputFiles: input.snapshot.files,
     });
     if (result.exitCode === 0) {
-      appendRunEvent(runId, "sandbox.completed", `执行完成，退出码 ${result.exitCode}，临时环境已清理`);
+      recordDeliverables(runId, result.artifacts);
+      const manifest = result.artifacts.map(({ content: _content, ...meta }) => meta);
+      appendRunEvent(runId, "sandbox.completed", `执行完成，退出码 ${result.exitCode}，临时环境已清理`, { artifacts: manifest });
       updateRun(runId, "succeeded", "沙箱执行完成，临时环境已清理", result.exitCode);
     } else {
       appendRunEvent(runId, "sandbox.failed", `命令以退出码 ${result.exitCode} 结束`);
@@ -83,6 +115,10 @@ export async function executeAgentRun(runId: string): Promise<void> {
       updateRun(runId, "failed", message, 1);
     }
   } finally {
+    // Artifact bytes intentionally stay cached (in-memory) so the Agent can
+    // pull deliverables after the run reaches a terminal state; the manifest
+    // lives on the run record. The in-memory cache is process-lifetime and
+    // bounded by per-run artifact caps.
     executions.delete(runId);
   }
 }

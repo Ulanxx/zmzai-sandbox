@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { createAgentRunRecord, executeAgentSandboxRun } from "@/lib/agent-executor";
 import { activeAgentRunCount, claimAgentSubmission, existingAgentSubmission, persistedRun } from "@/lib/persistent-runs";
-import type { CreateAgentRunInput, SandboxCommand, SandboxLimits, SandboxSnapshot } from "@/lib/sandbox-types";
+import type { CreateAgentRunInput, SandboxCommand, SandboxLimits, SandboxRun, SandboxSnapshot } from "@/lib/sandbox-types";
 
 const maxSnapshotFiles = 200;
 const maxSnapshotBytes = 1024 * 1024;
@@ -103,7 +103,7 @@ export function readAgentRunInput(body: unknown): { ok: true; input: CreateAgent
   return { ok: true, input: { userId, taskRunId, requestId, snapshot, command, limits } };
 }
 
-export async function idempotentAgentRun(input: CreateAgentRunInput): Promise<{ run: NonNullable<Awaited<ReturnType<typeof persistedRun>>>; replayed: boolean } | { error: string; code: string; status: number }> {
+export async function idempotentAgentRun(input: CreateAgentRunInput): Promise<{ run: SandboxRun; replayed: boolean } | { error: string; code: string; status: number }> {
   const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
   const existing = await existingAgentSubmission(input.taskRunId, input.requestId);
   if (existing) {
