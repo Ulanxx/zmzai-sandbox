@@ -347,7 +347,9 @@ async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCo
       artifacts.push({ path, bytes, contentType: contentTypeFor(path), sha256: "", tooLarge: true, content: Buffer.alloc(0) });
       continue;
     }
-    const readResponse = await execdCommand(endpoint, { command: `base64 -w0 ${shellQuote(path)} 2>/dev/null`, timeout: 30_000, background: false }, signal);
+    // Portable base64: no -w flag (busybox in alpine lacks it); wrapped output
+    // still decodes fine because Buffer.from(..., "base64") ignores whitespace.
+    const readResponse = await execdCommand(endpoint, { command: `base64 ${shellQuote(path)} 2>/dev/null`, timeout: 30_000, background: false }, signal);
     const read = await captureStdout(readResponse, maxArtifactFileBytes * 2 + 1024);
     if (read.exitCode !== 0) continue; // unreadable entry (directory, broken link)
     let content: Buffer;
