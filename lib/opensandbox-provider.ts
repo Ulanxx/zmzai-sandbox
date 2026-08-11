@@ -372,6 +372,7 @@ async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCo
     }
     artifacts.push({ path, bytes: content.length, contentType: contentTypeFor(path), sha256: hash, tooLarge: false, content });
   }
+  if (!artifacts.length) console.error("[artifact-collect] no deliverables; raw listing:", JSON.stringify(listing.text.slice(0, 2000)));
   return artifacts;
 }
 
@@ -424,7 +425,8 @@ export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promis
     if (input.collectArtifacts && result.exitCode === 0) {
       try {
         result.artifacts = await collectSandboxArtifacts(endpoint, input, input.signal);
-      } catch {
+      } catch (error) {
+        console.error("[artifact-collect] collection failed", error instanceof Error ? error.message : error);
         result.artifacts = [];
       }
     } else {
