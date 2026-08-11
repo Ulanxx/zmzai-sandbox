@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { maxArtifactCount, maxArtifactFileBytes, maxArtifactTotalBytes, type SandboxArtifactData } from "@/lib/sandbox-types";
 
 const DEFAULT_EXECD_PORT = 44772;
+// Execd commands run at the container root by default; a dedicated workdir keeps
+// snapshot files, commands and artifact collection scoped and isolated.
+const agentWorkDir = "/work";
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 
@@ -316,7 +319,7 @@ function sha256Hex(content: Buffer): string {
  * skipped. Runs before the temp sandbox is deleted.
  */
 async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCommand, signal?: AbortSignal): Promise<SandboxArtifactData[]> {
-  const listResponse = await execdCommand(endpoint, { command: "find . -type f -printf '%s\\t%p\\n' 2>/dev/null || find . -type f", timeout: 30_000, background: false }, signal);
+  const listResponse = await execdCommand(endpoint, { command: "find . -type f -printf '%s\\t%p\\n' 2>/dev/null || find . -type f", cwd: agentWorkDir, timeout: 30_000, background: false }, signal);
   const listing = await captureStdout(listResponse, 1024 * 1024);
   const rows = listing.text.split("\n").map((line) => line.trimEnd()).filter(Boolean);
   const files: Array<{ path: string; bytes: number }> = [];
@@ -349,7 +352,7 @@ async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCo
     }
     // Portable base64: no -w flag (busybox in alpine lacks it); wrapped output
     // still decodes fine because Buffer.from(..., "base64") ignores whitespace.
-    const readResponse = await execdCommand(endpoint, { command: `base64 ${shellQuote(path)} 2>/dev/null`, timeout: 30_000, background: false }, signal);
+    const readResponse = await execdCommand(endpoint, { command: `base64 ${shellQuote(path)} 2>/dev/null`, cwd: agentWorkDir, timeout: 30_000, background: false }, signal);
     const read = await captureStdout(readResponse, maxArtifactFileBytes * 2 + 1024);
     if (read.exitCode !== 0) continue; // unreadable entry (directory, broken link)
     let content: Buffer;
@@ -412,15 +415,19 @@ export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promis
 
   try {
     const endpoint = await getExecdEndpoint(sandboxId);
+    // Dedicated workdir so snapshot writes, the command and artifact
+    // collection never touch the container root filesystem.
+    const mkdirResponse = await execdCommand(endpoint, { command: `mkdir -p ${shellQuote(agentWorkDir)}`, timeout: 30_000, background: false }, input.signal);
+    await streamExecdOutput(mkdirResponse, () => undefined);
     for (const file of input.files) {
       const dir = relativeDir(file.path);
       const base64 = Buffer.from(file.content).toString("base64");
       const write = `${dir ? `mkdir -p ${shellQuote(dir)} && ` : ""}printf '%s' '${base64}' | base64 -d > ${shellQuote(file.path)}`;
-      const writeResponse = await execdCommand(endpoint, { command: write, timeout: 30_000, background: false }, input.signal);
+      const writeResponse = await execdCommand(endpoint, { command: write, cwd: agentWorkDir, timeout: 30_000, background: false }, input.signal);
       await streamExecdOutput(writeResponse, () => undefined);
     }
     const command = [input.program, ...input.args].map(shellQuote).join(" ");
-    const runResponse = await execdCommand(endpoint, { command, ...(input.cwd ? { cwd: input.cwd } : {}), timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }, input.signal);
+    const runResponse = await execdCommand(endpoint, { command, cwd: input.cwd ?? agentWorkDir, timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }, input.signal);
     const result = await streamExecdOutput(runResponse, input.onLine ?? (() => undefined));
     if (input.collectArtifacts && result.exitCode === 0) {
       try {
