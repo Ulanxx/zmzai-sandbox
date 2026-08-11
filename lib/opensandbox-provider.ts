@@ -257,8 +257,11 @@ async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "
   return { stdout, stderr, exitCode };
 }
 
-/** Captures raw stdout text from an Execd SSE stream up to `maxBytes`. */
-async function captureStdout(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean; exitCode: number }> {
+/** Captures raw stdout text from an Execd SSE stream up to `maxBytes`. Execd
+ *  delivers each line as its own stdout event WITHOUT the trailing newline, so
+ *  `chunks` preserves the per-line boundaries for callers that need them. */
+async function captureStdout(response: Response, maxBytes: number): Promise<{ text: string; chunks: string[]; truncated: boolean; exitCode: number }> {
+  const chunks: string[] = [];
   let text = "";
   let truncated = false;
   let exitCode = 0;
@@ -272,6 +275,7 @@ async function captureStdout(response: Response, maxBytes: number): Promise<{ te
     buffer += decoder.decode(chunk.value, { stream: true });
     buffer = parseSseChunk(buffer, (event) => {
       if (event.type === "stdout" && event.text) {
+        chunks.push(event.text);
         const remaining = maxBytes - Buffer.byteLength(text, "utf8");
         if (remaining > 0) text += event.text.slice(0, Math.max(0, remaining));
         else truncated = true;
@@ -281,7 +285,7 @@ async function captureStdout(response: Response, maxBytes: number): Promise<{ te
       }
     });
   }
-  return { text, truncated, exitCode };
+  return { text, chunks, truncated, exitCode };
 }
 
 const contentTypeByExt: Record<string, string> = {
@@ -321,7 +325,8 @@ function sha256Hex(content: Buffer): string {
 async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCommand, signal?: AbortSignal): Promise<SandboxArtifactData[]> {
   const listResponse = await execdCommand(endpoint, { command: "find . -type f -printf '%s\\t%p\\n' 2>/dev/null || find . -type f", cwd: agentWorkDir, timeout: 30_000, background: false }, signal);
   const listing = await captureStdout(listResponse, 1024 * 1024);
-  const rows = listing.text.split("\n").map((line) => line.trimEnd()).filter(Boolean);
+  // Each execd stdout event is one line without the trailing newline.
+  const rows = listing.chunks.map((line) => line.trim()).filter(Boolean);
   const files: Array<{ path: string; bytes: number }> = [];
   for (const row of rows) {
     const tab = row.indexOf("\t");
