@@ -18,11 +18,10 @@ FROM node:22-alpine
 RUN apk add --no-cache bash git curl unzip tar ca-certificates python3 py3-pip \
   && rm -rf /var/cache/apk/*
 
-# Python 常用库（PPT 验收 / 测试 / 图片）
-RUN pip install --no-cache-dir \
+# Python 常用库（PPT 验收 / 测试）。需要图片能力时再补 pillow（需 jpeg/zlib 构建依赖）。
+RUN pip install --no-cache-dir --break-system-packages \
   python-pptx==1.0.2 \
   pytest==8.3.4 \
-  pillow==11.1.0 \
   && rm -rf /root/.cache/pip
 
 # Node 常用工具：tsx 让 Agent 可以直接运行 TypeScript

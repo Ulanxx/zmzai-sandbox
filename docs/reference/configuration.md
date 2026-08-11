@@ -11,7 +11,7 @@
 | `OPEN_SANDBOX_URL` | 无 | OpenSandbox Server 的私有基础 URL；未设置时使用 demo provider |
 | `OPEN_SANDBOX_API_KEY` | 无 | 调用 OpenSandbox 生命周期 API 的服务端密钥 |
 | `OPEN_SANDBOX_PROTOCOL` | `http` | Execd endpoint 为主机名/IP 时使用的协议 |
-| `OPEN_SANDBOX_IMAGE` | `node:22-alpine` | JavaScript 和 shell 运行镜像 |
+| `OPEN_SANDBOX_IMAGE` | `node:22-alpine` | 执行镜像。生产已构建 `zmzai-agent-python:1`（node + python3 + python-pptx/pytest + tsx + 基础工具，见 `docker/agent-python.Dockerfile`） |
 | `OPEN_SANDBOX_CPU_LIMIT` | `500m` | 每个临时沙箱的 CPU 限制 |
 | `OPEN_SANDBOX_MEMORY_LIMIT` | `512Mi` | 每个临时沙箱的内存限制 |
 | `SANDBOX_AGENT_SERVICE_SECRET_CURRENT` | 无 | a.zmzai.cloud 调用内部 Agent API 的服务密钥；生产必须配置 |
