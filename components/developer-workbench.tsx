@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { Navbar } from "@zmzai/theme";
+
 type User = { name: string; email: string };
 type SandboxKey = { id: string; prefix: string; name: string; status: "active" | "revoked"; createdAt: string; lastUsedAt: string | null; revokedAt: string | null };
 
@@ -65,7 +67,21 @@ export function DeveloperWorkbench() {
   -d '{"task":"计算 1+1 并输出结果","model":"你的模型 ID"}'`, []);
 
   return <main className="developer-shell">
-    <header className="developer-header"><a href="/" className="brand-lockup"><span className="brand-mark">Z</span><span><span className="eyebrow">zmzai cloud · sandbox</span><strong>开发者工作台</strong></span></a><div className="header-meta">{user ? <><span className="connection-dot" />{user.name}<span className="meta-separator">·</span>{user.email}</> : loading ? "正在检查登录" : <a className="header-login" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent(`${baseUrl}/developers`)}`}>登录以创建 sandbox_key</a>}</div></header>
+    <Navbar
+    sublabel="sandbox"
+    badge={<span className="rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-ink-3">z.zmzai.cloud</span>}
+    actions={
+      user ? (
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="connection-dot" />{user.name}<span className="font-mono text-ink-3">· {user.email}</span></span>
+      ) : loading ? (
+        <span className="text-xs text-ink-3">正在检查登录</span>
+      ) : (
+        <a className="text-xs text-accent-readable underline underline-offset-4" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent(`${baseUrl}/developers`)}`}>登录以创建 sandbox_key</a>
+      )
+    }
+  >
+    <a href="/" className="inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">开发者工作台</a>
+  </Navbar>
     <section className="developer-hero"><p className="eyebrow">Sandbox Runner · Developer Preview</p><h1>把一次执行接进你的 Agent。</h1><p>创建只授权 Sandbox Runner 的 <code>sandbox_key</code>。模型、额度与结算仍统一经过 ZMZAI Relay，临时环境默认禁网并受资源限制。</p></section>
     {!user && !loading ? <section className="developer-login"><h2>先登录，再创建你的 Sandbox 凭据。</h2><a className="btn-primary" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent(`${baseUrl}/developers`)}`}>前往登录 →</a></section> : <>
       <section className="developer-section key-section"><div><p className="eyebrow">01 · Sandbox Keys</p><h2>创建一把只属于你的 key。</h2><p>明文只展示一次。请保存到 Agent 的服务端密钥管理中，不要写入浏览器、代码仓库或日志。</p></div><form onSubmit={createKey} className="key-form"><label htmlFor="key-name">名称</label><input id="key-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="例如：我的本地 Agent" disabled={busy} /><button className="btn-primary" type="submit" disabled={busy || !name.trim()}>{busy ? "处理中…" : "创建 sandbox_key"}</button>{error ? <p className="form-error">{error}</p> : null}</form></section>

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../node_modules/@zmzai/theme/src/**/*.{ts,tsx}";
 
 /* zmzai cloud 牧之 — tokens.css is the source of truth.
    Locked via Hallmark Study; see design.md. Warm paper, warm ink,
@@ -18,6 +19,17 @@
   --color-accent-strong: oklch(0.39 0.150 27);
   --color-accent-ink: oklch(0.97 0.008 85);
   --color-success: oklch(0.52 0.090 160);
+  --color-bg: oklch(0.95 0.012 85);
+  --color-ink-2: oklch(0.47 0.013 55);
+  --color-ink-3: oklch(0.55 0.012 55);
+  --color-surface-2: oklch(0.92 0.014 80);
+  --color-line-strong: oklch(0.18 0.011 40);
+  --color-danger: oklch(0.42 0.155 27);
+  --color-warning: oklch(0.65 0.10 80);
+  --color-dark-bg: #0A0A0A;
+  --color-dark-surface: #171717;
+  --color-dark-ink: #FAFAFA;
+  --color-dark-line: #27272A;
 
   /* Fonts — serif content voice + mono system voice. No single-sans. */
   --font-sans: "MiSans", "Noto Serif SC", "Source Han Serif SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -32,6 +44,12 @@
 
   /* Radius — sharp editorial. */
   --radius-card: 2px;
+  --radius-sm: 2px;
+  --radius: 2px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+  --radius-pill: 9999px;
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
   --radius-input: 0px;
 }
 

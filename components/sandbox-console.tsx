@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Navbar } from "@zmzai/theme";
 import type { RunStatus, SandboxRun } from "@/lib/sandbox-types";
 
 type SessionUser = { id: string; name: string; email: string };
@@ -142,16 +143,20 @@ export function SandboxConsole() {
 
   return (
     <main className="console-shell">
-      <header className="console-header">
-        <div className="brand-lockup">
-          <span className="brand-mark">Z</span>
-          <div>
-            <p className="eyebrow">zmzai cloud · sandbox</p>
-            <h1>沙箱场</h1>
-          </div>
-        </div>
-        <div className="header-meta"><span className="connection-dot" /><span>{user ? user.name : isLoadingSession ? "正在检查登录" : "未登录"}</span><span className="meta-separator">·</span><span>并发 {activeCount}/1</span><a className="header-login" href="/developers">开发者文档</a>{!user && !isLoadingSession ? <a className="header-login" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent("https://z.zmzai.cloud/")}`}>登录</a> : null}</div>
-      </header>
+      <Navbar
+        sublabel="sandbox"
+        badge={<span className="rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-ink-3">z.zmzai.cloud</span>}
+        actions={
+          <>
+            <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="connection-dot" />{user ? user.name : isLoadingSession ? "正在检查登录" : "未登录"}</span>
+            <span className="font-mono text-xs text-ink-3">并发 {activeCount}/1</span>
+            <a className="text-xs text-ink-2 transition-colors hover:text-accent" href="/developers">开发者文档</a>
+            {!user && !isLoadingSession ? <a className="text-xs text-accent-readable underline underline-offset-4" href={`https://auth.zmzai.cloud/login?next=${encodeURIComponent("https://z.zmzai.cloud/")}`}>登录</a> : null}
+          </>
+        }
+      >
+        <h1 className="text-sm font-semibold">沙箱场</h1>
+      </Navbar>
 
       <section className="console-intro">
         <div><p className="eyebrow">执行控制台</p><h2>让代码先在边界里跑起来。</h2></div>
