@@ -20,7 +20,7 @@
   --color-success: oklch(0.52 0.090 160);
 
   /* Fonts — serif content voice + mono system voice. No single-sans. */
-  --font-sans: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --font-sans: "MiSans", "Noto Serif SC", "Source Han Serif SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
 
@@ -34,6 +34,29 @@
   --radius-card: 2px;
   --radius-input: 0px;
 }
+
+/* MiSans @font-face（v0.2.9 主字体：中文无衬线现代感） */
+@font-face {
+  font-family: 'MiSans';
+  src: url('https://cdn.jsdelivr.net/gh/dsrkafuu/misans@main/raw/Normal/woff2/MiSans-Regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('https://cdn.jsdelivr.net/gh/dsrkafuu/misans@main/raw/Normal/woff2/MiSans-Medium.woff2') format('woff2');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('https://cdn.jsdelivr.net/gh/dsrkafuu/misans@main/raw/Normal/woff2/MiSans-Semibold.woff2') format('woff2');
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('https://cdn.jsdelivr.net/gh/dsrkafuu/misans@main/raw/Normal/woff2/MiSans-Bold.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
 
 :root {
   color-scheme: light;
@@ -53,7 +76,7 @@
     margin: 0;
     background: var(--color-paper);
     color: var(--color-ink);
-    font-family: var(--font-serif);
+    font-family: var(--font-sans);
     font-size: 1rem;
     line-height: 1.65;
     text-rendering: optimizeLegibility;
