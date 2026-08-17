@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navbar } from "@zmzai/theme";
+import { ModelSelector, Navbar, type ModelSelectorData, type ModelSelectorValue } from "@zmzai/theme";
 import type { RunStatus, SandboxRun } from "@/lib/sandbox-types";
 
 type SessionUser = { id: string; name: string; email: string };
-type RelayModel = { model: string; maxInputTokens: number; maxOutputTokens: number; allowedReasoningEfforts: string[] };
 
 const statusLabels: Record<RunStatus, string> = {
   queued: "排队中",
@@ -41,9 +40,10 @@ export function SandboxConsole() {
   const [runs, setRuns] = useState<SandboxRun[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [task, setTask] = useState("");
-  const [model, setModel] = useState("");
+  const [modelSelectorData, setModelSelectorData] = useState<ModelSelectorData | null>(null);
+  const [modelValue, setModelValue] = useState<ModelSelectorValue>({ model: "" });
+  const model = modelValue.model;
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [models, setModels] = useState<RelayModel[]>([]);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,10 +75,13 @@ export function SandboxConsole() {
       setUser(session.user);
       const modelResponse = await fetch("/api/models", { cache: "no-store" });
       if (modelResponse.ok) {
-        const data = (await modelResponse.json()) as { models?: RelayModel[] };
-        const available = data.models ?? [];
-        setModels(available);
-        setModel((current) => current || available[0]?.model || "");
+        const data = (await modelResponse.json()) as { modelSelectorData?: ModelSelectorData };
+        if (data.modelSelectorData) {
+          setModelSelectorData(data.modelSelectorData);
+          const allModels = data.modelSelectorData.channels.flatMap((ch: { models: { id: string }[] }) => ch.models);
+          const firstModel = data.modelSelectorData.featured[0]?.id || allModels[0]?.id || "";
+          if (firstModel) setModelValue({ model: firstModel });
+        }
       } else {
         setError("模型目录暂时不可用");
       }
@@ -169,7 +172,7 @@ export function SandboxConsole() {
           <label className="sr-only" htmlFor="task">任务描述</label>
           <textarea id="task" value={task} onChange={(event) => setTask(event.target.value)} placeholder="例如：读取当前 Workspace 的资料，整理成 Markdown 报告并保存。" rows={3} />
           <div className="composer-actions">
-            <label className="model-select"><span>模型</span><select value={model} onChange={(event) => setModel(event.target.value)} disabled={!user || !models.length}><option value="">{isLoadingSession ? "检查登录…" : models.length ? "选择模型" : "暂无可用模型"}</option>{models.map((item) => <option key={item.model} value={item.model}>{item.model}</option>)}</select></label>
+            <label className="model-select"><span>模型</span><ModelSelector data={modelSelectorData ?? { featured: [], channels: [] }} value={modelValue} onChange={setModelValue} placeholder={isLoadingSession ? "检查登录…" : "选择模型"} /></label>
             <button className="btn-primary" disabled={isSubmitting || !user || !model} type="submit">{isSubmitting ? "创建中…" : "开始运行 →"}</button>
           </div>
           {error ? <p className="form-error">{error}</p> : null}

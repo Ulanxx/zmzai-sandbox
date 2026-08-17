@@ -1,2 +1,4 @@
 allowBuilds:
   sharp: set this to true or false
+minimumReleaseAgeExclude:
+  - '@zmzai/theme@0.4.1'
