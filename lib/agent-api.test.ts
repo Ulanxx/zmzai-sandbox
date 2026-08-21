@@ -35,6 +35,12 @@ describe("readAgentRunInput validation", () => {
     expect(result.input.limits).toEqual({ timeoutMs: 30000, cpuMillis: 500, memoryMiB: 512 });
   });
 
+  it("accepts an empty snapshot for a command-only task", () => {
+    const result = readAgentRunInput({ ...validBody(), snapshot: { revisionId: null, files: [] } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.input.snapshot.files).toEqual([]);
+  });
+
   it("rejects a requestId shorter than 16 chars", () => {
     const result = readAgentRunInput({ ...validBody(), requestId: "short" });
     expect(result.ok).toBe(false);
@@ -61,6 +67,22 @@ describe("readAgentRunInput validation", () => {
     const result = readAgentRunInput({ ...validBody(), command: { program: "sudo", args: ["rm", "-rf", "/"] } });
     expect(result.ok).toBe(false);
     expect(result.ok ? "" : result.error).toContain("不在允许列表");
+  });
+
+  it("normalizes the workspace root cwd", () => {
+    const result = readAgentRunInput({ ...validBody(), command: { program: "node", args: ["src/app.ts"], cwd: "." } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.input.command).toEqual({ program: "node", args: ["src/app.ts"] });
+  });
+
+  it("keeps a safe child cwd and rejects traversal", () => {
+    const child = readAgentRunInput({ ...validBody(), command: { program: "node", args: ["app.ts"], cwd: "src" } });
+    expect(child.ok).toBe(true);
+    if (child.ok) expect(child.input.command.cwd).toBe("src");
+
+    const traversal = readAgentRunInput({ ...validBody(), command: { program: "node", args: [], cwd: "../outside" } });
+    expect(traversal.ok).toBe(false);
+    expect(traversal.ok ? "" : traversal.error).toContain("cwd");
   });
 
   it("rejects env keys that look like secrets", () => {

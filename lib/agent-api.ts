@@ -50,7 +50,10 @@ export function readAgentRunInput(body: unknown): { ok: true; input: CreateAgent
   const revisionId = typeof snapshotValue.revisionId === "string" ? snapshotValue.revisionId : null;
   if (revisionId && (revisionId.length > 128 || revisionId.includes("\0"))) return { ok: false, error: "revisionId 不合法" };
   const filesValue = Array.isArray(snapshotValue.files) ? snapshotValue.files : null;
-  if (!filesValue || filesValue.length < 1 || filesValue.length > maxSnapshotFiles) return { ok: false, error: `snapshot.files 需要 1 到 ${maxSnapshotFiles} 个文件` };
+  // A command-only task starts with an empty workspace. It still gets an
+  // isolated working directory, but does not need a synthetic placeholder.
+  // Keep the upper bound and all path/byte validation below intact.
+  if (!filesValue || filesValue.length > maxSnapshotFiles) return { ok: false, error: `snapshot.files 需要 0 到 ${maxSnapshotFiles} 个文件` };
   const snapshot: SandboxSnapshot = { revisionId, files: [] };
   let totalBytes = 0;
   for (const file of filesValue) {
@@ -73,7 +76,8 @@ export function readAgentRunInput(body: unknown): { ok: true; input: CreateAgent
   for (const arg of args) {
     if (arg.length > 512 || arg.includes("\0")) return { ok: false, error: "参数不合法" };
   }
-  const cwd = typeof commandValue.cwd === "string" && commandValue.cwd ? commandValue.cwd : undefined;
+  const requestedCwd = typeof commandValue.cwd === "string" ? commandValue.cwd.trim() : "";
+  const cwd = requestedCwd && requestedCwd !== "." ? requestedCwd : undefined;
   if (cwd && !isSafeRelativePath(cwd)) return { ok: false, error: "cwd 必须是相对路径" };
   const envs: Record<string, string> = {};
   const envsValue = commandValue.envs as Record<string, unknown> | undefined;

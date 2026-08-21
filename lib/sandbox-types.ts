@@ -54,6 +54,8 @@ export type SandboxRun = {
   snapshot?: SandboxSnapshot;
   command?: SandboxCommand;
   limits?: SandboxLimits;
+  /** OpenSandbox ID while a real provider run is active. Internal only. */
+  providerSandboxId?: string;
   /** Deliverables manifest produced by the run (metadata only; bytes are cached
    *  separately in the in-memory artifact store, never persisted to Mongo). */
   deliverables?: SandboxArtifactMeta[];
@@ -74,4 +76,3 @@ export type CreateAgentRunInput = {
   command: SandboxCommand;
   limits?: SandboxLimits;
 };
-

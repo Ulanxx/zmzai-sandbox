@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { setRunArtifacts } from "@/lib/artifact-store";
-import { runAgentSandboxCommand } from "@/lib/opensandbox-provider";
-import { appendRunEvent, createRun, getRun, setRunDeliverables, updateRun } from "@/lib/sandbox-store";
+import { deleteOpenSandbox, runAgentSandboxCommand } from "@/lib/opensandbox-provider";
+import { appendRunEvent, createRun, getRun, setRunDeliverables, setRunProviderSandbox, updateRun } from "@/lib/sandbox-store";
 import type { CreateAgentRunInput, SandboxArtifactData } from "@/lib/sandbox-types";
 
 const globalExecutions = globalThis as typeof globalThis & { __zmzaiAgentSandboxExecutions?: Map<string, AbortController> };
@@ -91,11 +91,24 @@ export async function executeAgentRun(runId: string): Promise<void> {
       cpuMillis: limits.cpuMillis,
       memoryMiB: limits.memoryMiB,
       signal: executions.get(runId)?.signal,
+      onSandboxCreated: async (sandboxId) => {
+        setRunProviderSandbox(runId, sandboxId);
+        const current = getRun(runId);
+        if (current?.status === "cancellation_requested" || current?.status === "cancelled") {
+          await deleteOpenSandbox(sandboxId).catch(() => undefined);
+          throw new Error("执行已取消");
+        }
+      },
       onLine: (kind, text) => appendRunEvent(runId, "sandbox.output", text),
       collectArtifacts: true,
       inputFiles: input.snapshot.files,
     });
-    if (result.exitCode === 0) {
+    const currentStatus = getRun(runId)?.status;
+    const cancellationRequested = executions.get(runId)?.signal.aborted || currentStatus === "cancellation_requested" || currentStatus === "cancelled";
+    if (cancellationRequested) {
+      appendRunEvent(runId, "sandbox.failed", "执行已取消并清理");
+      updateRun(runId, "cancelled", "沙箱执行已取消并清理");
+    } else if (result.exitCode === 0) {
       recordDeliverables(runId, result.artifacts);
       const manifest = result.artifacts.map(({ content: _content, ...meta }) => meta);
       appendRunEvent(runId, "sandbox.completed", `执行完成，退出码 ${result.exitCode}，临时环境已清理`, { artifacts: manifest });
@@ -105,8 +118,9 @@ export async function executeAgentRun(runId: string): Promise<void> {
       updateRun(runId, "failed", `沙箱命令执行失败（退出码 ${result.exitCode}）`, result.exitCode);
     }
   } catch (error) {
-    const signal = executions.get(runId)?.signal;
-    if (signal?.aborted) {
+    const status = getRun(runId)?.status;
+    const cancelled = executions.get(runId)?.signal.aborted || status === "cancellation_requested" || status === "cancelled";
+    if (cancelled) {
       appendRunEvent(runId, "sandbox.failed", "执行已取消并清理");
       updateRun(runId, "cancelled", "沙箱执行已取消并清理");
     } else {

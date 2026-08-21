@@ -89,6 +89,14 @@ export function setRunDeliverables(runId: string, deliverables: SandboxArtifactM
   return run;
 }
 
+export function setRunProviderSandbox(runId: string, providerSandboxId: string) {
+  const run = runs.get(runId);
+  if (!run) return undefined;
+  run.providerSandboxId = providerSandboxId;
+  void persistRun(run).catch((error) => console.error("persist sandbox run", error));
+  return run;
+}
+
 export function addArtifact(runId: string, name: string) {
   const run = runs.get(runId);
   if (!run) return undefined;

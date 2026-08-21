@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { quoteExecdArgument } from "@/lib/execd-shell";
 import { relayRequest, relaySandboxRequest } from "@/lib/relay-client";
 
 export type AgentCommand = {
@@ -80,9 +81,8 @@ async function parsePlanResponse(response: Response) {
 }
 
 export function commandForAgent(command: AgentCommand) {
-  const shellQuote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
   if (command.language === "shell") return command.code;
-  return `${command.language === "python" ? "python3 -c" : "node -e"} ${shellQuote(command.code)}`;
+  return `${command.language === "python" ? "python3 -c" : "node -e"} ${quoteExecdArgument(command.code)}`;
 }
 
 export function imageForAgent(command: AgentCommand) {

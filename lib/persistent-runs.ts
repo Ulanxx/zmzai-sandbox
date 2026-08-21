@@ -62,6 +62,24 @@ export async function requestPersistedCancellation(runId: string, ownerSandboxKe
   return run;
 }
 
+/** Finalize an internal Agent cancellation when its in-process run record is
+ * gone (for example after a Sandbox service restart). */
+export async function cancelPersistedAgentRun(runId: string) {
+  await connectMongo();
+  const doc = await SandboxRunModel.findOne({ runId, "payload.taskRunId": { $exists: true } });
+  if (!doc) return undefined;
+  const run = doc.payload;
+  if (["succeeded", "failed", "cancelled"].includes(run.status)) return run;
+  const finishedAt = new Date().toISOString();
+  const sequence = (run.events.at(-1)?.sequence ?? 0) + 1;
+  run.status = "cancelled";
+  run.finishedAt = finishedAt;
+  run.events.push({ id: crypto.randomUUID(), sequence, at: finishedAt, kind: "status", message: "沙箱执行已取消并清理" });
+  doc.markModified("payload");
+  await doc.save();
+  return run;
+}
+
 const leaseExpiry = () => new Date(Date.now() + 90_000);
 
 export async function startExecutionLease(runId: string, ownerSandboxKeyId: string, executionId: string) {
@@ -163,4 +181,3 @@ export async function existingAgentSubmission(taskRunId: string, requestId: stri
   await connectMongo();
   return AgentSandboxSubmissionModel.findOne({ taskRunId, requestId }).lean();
 }
-

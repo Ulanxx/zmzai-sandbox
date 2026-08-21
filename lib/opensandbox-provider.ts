@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { quoteExecdArgument } from "@/lib/execd-shell";
+
 import { maxArtifactCount, maxArtifactFileBytes, maxArtifactTotalBytes, type SandboxArtifactData } from "@/lib/sandbox-types";
 
 const DEFAULT_EXECD_PORT = 44772;
@@ -39,6 +41,7 @@ export type AgentSandboxCommand = {
   image?: string;
   signal?: AbortSignal;
   onLine?: (kind: "stdout" | "stderr", text: string) => void;
+  onSandboxCreated?: (sandboxId: string) => Promise<void> | void;
   /** Collect files new or changed vs the input snapshot into `artifacts`. */
   collectArtifacts?: boolean;
   inputFiles?: Array<{ path: string; content: string }>;
@@ -202,10 +205,6 @@ export async function runOpenSandboxCommand(input: OpenSandboxCommand): Promise<
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function relativeDir(path: string): string {
   const index = path.lastIndexOf("/");
   return index <= 0 ? "" : path.slice(0, index);
@@ -223,7 +222,7 @@ async function execdCommand(endpoint: Endpoint, body: Record<string, unknown>, s
   return response;
 }
 
-async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "stderr", text: string) => void): Promise<{ stdout: string[]; stderr: string[]; exitCode: number; artifacts?: SandboxArtifactData[] }> {
+async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "stderr", text: string) => void, signal?: AbortSignal): Promise<{ stdout: string[]; stderr: string[]; exitCode: number; artifacts?: SandboxArtifactData[] }> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   let outputBytes = 0;
@@ -231,6 +230,11 @@ async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "
   let buffer = "";
   const reader = response.body?.getReader();
   if (!reader) throw new Error("OpenSandbox Execd 没有返回 SSE body");
+  // Deleting a sandbox does not necessarily close an already-established
+  // Execd response immediately. Cancel the reader as well so a user cancel
+  // always releases this awaiting execution path.
+  const cancelReader = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener("abort", cancelReader, { once: true });
   const decoder = new TextDecoder();
   const push = (kind: "stdout" | "stderr", text: string) => {
     outputBytes += Buffer.byteLength(text);
@@ -240,18 +244,22 @@ async function streamExecdOutput(response: Response, onLine: (kind: "stdout" | "
     }
     onLine(kind, text);
   };
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    buffer = parseSseChunk(buffer, (event) => {
-      if (event.type === "stdout" && event.text) push("stdout", event.text);
-      if (event.type === "stderr" && event.text) push("stderr", event.text);
-      if (event.type === "error") {
-        push("stderr", event.error?.evalue || event.text || "OpenSandbox 执行失败");
-        exitCode = 1;
-      }
-    });
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      buffer = parseSseChunk(buffer, (event) => {
+        if (event.type === "stdout" && event.text) push("stdout", event.text);
+        if (event.type === "stderr" && event.text) push("stderr", event.text);
+        if (event.type === "error") {
+          push("stderr", event.error?.evalue || event.text || "OpenSandbox 执行失败");
+          exitCode = 1;
+        }
+      });
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancelReader);
   }
   if (outputBytes > MAX_OUTPUT_BYTES) { push("stderr", "输出超过 256 KiB 限制，已截断"); exitCode = 1; }
   return { stdout, stderr, exitCode };
@@ -357,7 +365,7 @@ async function collectSandboxArtifacts(endpoint: Endpoint, input: AgentSandboxCo
     }
     // Portable base64: no -w flag (busybox in alpine lacks it); wrapped output
     // still decodes fine because Buffer.from(..., "base64") ignores whitespace.
-    const readResponse = await execdCommand(endpoint, { command: `base64 ${shellQuote(path)} 2>/dev/null`, cwd: agentWorkDir, timeout: 30_000, background: false }, signal);
+    const readResponse = await execdCommand(endpoint, { command: `base64 ${quoteExecdArgument(path)} 2>/dev/null`, cwd: agentWorkDir, timeout: 30_000, background: false }, signal);
     const read = await captureStdout(readResponse, maxArtifactFileBytes * 2 + 1024);
     if (read.exitCode !== 0) continue; // unreadable entry (directory, broken link)
     let content: Buffer;
@@ -415,6 +423,7 @@ export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promis
   const created = (await createResponse.json()) as { id?: string };
   if (!created.id) throw new Error("OpenSandbox 创建响应缺少 sandbox id");
   const sandboxId = created.id;
+  await input.onSandboxCreated?.(sandboxId);
   const abort = () => { void deleteOpenSandbox(sandboxId).catch(() => undefined); };
   input.signal?.addEventListener("abort", abort, { once: true });
 
@@ -422,18 +431,18 @@ export async function runAgentSandboxCommand(input: AgentSandboxCommand): Promis
     const endpoint = await getExecdEndpoint(sandboxId);
     // Dedicated workdir so snapshot writes, the command and artifact
     // collection never touch the container root filesystem.
-    const mkdirResponse = await execdCommand(endpoint, { command: `mkdir -p ${shellQuote(agentWorkDir)}`, timeout: 30_000, background: false }, input.signal);
-    await streamExecdOutput(mkdirResponse, () => undefined);
+    const mkdirResponse = await execdCommand(endpoint, { command: `mkdir -p ${quoteExecdArgument(agentWorkDir)}`, timeout: 30_000, background: false }, input.signal);
+    await streamExecdOutput(mkdirResponse, () => undefined, input.signal);
     for (const file of input.files) {
       const dir = relativeDir(file.path);
       const base64 = Buffer.from(file.content).toString("base64");
-      const write = `${dir ? `mkdir -p ${shellQuote(dir)} && ` : ""}printf '%s' '${base64}' | base64 -d > ${shellQuote(file.path)}`;
+      const write = `${dir ? `mkdir -p ${quoteExecdArgument(dir)} && ` : ""}printf '%s' '${base64}' | base64 -d > ${quoteExecdArgument(file.path)}`;
       const writeResponse = await execdCommand(endpoint, { command: write, cwd: agentWorkDir, timeout: 30_000, background: false }, input.signal);
-      await streamExecdOutput(writeResponse, () => undefined);
+      await streamExecdOutput(writeResponse, () => undefined, input.signal);
     }
-    const command = [input.program, ...input.args].map(shellQuote).join(" ");
+    const command = [input.program, ...input.args].map(quoteExecdArgument).join(" ");
     const runResponse = await execdCommand(endpoint, { command, cwd: input.cwd ?? agentWorkDir, timeout: input.timeoutMs ?? 60000, background: false, envs: input.envs }, input.signal);
-    const result = await streamExecdOutput(runResponse, input.onLine ?? (() => undefined));
+    const result = await streamExecdOutput(runResponse, input.onLine ?? (() => undefined), input.signal);
     if (input.collectArtifacts && result.exitCode === 0) {
       try {
         result.artifacts = await collectSandboxArtifacts(endpoint, input, input.signal);
